@@ -166,3 +166,7 @@ cython_debug/
 old/
 
 *.csv
+
+data/
+test_download.py
+failed_downloads.txt
