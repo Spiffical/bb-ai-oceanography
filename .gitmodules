@@ -1,0 +1,8 @@
+[submodule "PyPaperBot"]
+  path = PyPaperBot
+  url = https://github.com/spiffical/PyPaperBot.git
+
+[submodule "SciDownl"]
+  path = SciDownl
+  url = https://github.com/spiffical/SciDownl.git
+
