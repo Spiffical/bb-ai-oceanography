@@ -1,25 +1,37 @@
 import os
-from bs4 import BeautifulSoup
-import re
+import io
 
-def is_valid_pdf(filepath):
-    if os.path.getsize(filepath) == 0:
+def is_valid_pdf(content):
+    if isinstance(content, str):  # It's a file path
+        if not os.path.exists(content) or os.path.getsize(content) == 0:
+            print(f"File does not exist or is empty: {content}")
+            return False
+        try:
+            with open(content, 'rb') as f:
+                header = f.read(4)
+        except Exception as e:
+            print(f"Error reading PDF file: {e}")
+            return False
+    elif isinstance(content, bytes):  # It's byte content
+        if len(content) == 0:
+            print("Byte content is empty")
+            return False
+        header = content[:4]
+    else:
+        print(f"Unsupported content type: {type(content)}")
         return False
-    try:
-        with open(filepath, 'rb') as f:
-            header = f.read(4)
-            return header == b'%PDF'
-    except Exception as e:
-        print(f"Error checking PDF validity: {e}")
+
+    if header != b'%PDF':
+        print(f"Invalid PDF header: {header}")
         return False
-    
-def clean_title(title):
-    # Remove HTML tags
-    title = BeautifulSoup(title, "html.parser").get_text()
-    # Remove non-letter characters and convert to lower case
-    title = re.sub(r'[^a-zA-Z]', '', title).lower()
-    return title
-    
-def standardize_title(title):
-    """Converts title to lowercase and replaces spaces with hyphens."""
-    return title.replace(" ", "-").lower()
+
+    # Additional check for minimum file size (let's say 100 bytes as an arbitrary minimum)
+    if isinstance(content, str):
+        if os.path.getsize(content) < 100:
+            print(f"PDF file is too small: {os.path.getsize(content)} bytes")
+            return False
+    elif len(content) < 100:
+        print(f"PDF content is too small: {len(content)} bytes")
+        return False
+
+    return True

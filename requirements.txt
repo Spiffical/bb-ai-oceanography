@@ -1,0 +1,7 @@
+requests
+beautifulsoup4
+habanero
+unpywall
+arxiv
+python-dotenv
+pandas
