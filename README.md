@@ -121,7 +121,7 @@ python scripts/download_papers.py --doi 10.1016/j.example.2023.123456 output_pat
 2. Generate a report using a YAML configuration file:
 
    ```
-   python -m paperai.report /path/to/report_config.yml /path/to/output
+   python -m paperai.report /path/to/report_config.yml 100 md /path/to/output
    ```
 
    Replace:

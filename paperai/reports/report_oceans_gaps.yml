@@ -1,17 +1,16 @@
-name: ML in Ocean Sciences Report
+name: ML in Ocean Sciences Report ministral
 
 options:
   topn: 100
   render: md
   qa: "deepset/roberta-base-squad2"
   generate_summary: true
-  model: "google/gemma-2-9b-it"  # This one seems to give the best results overall
-  # model: "bartowski/Ministral-8B-Instruct-2410-HF-GGUF-TEST"
+  # model: "google/gemma-2-9b-it"  # This one seems to give the best results overall
+  model: "bartowski/Ministral-8B-Instruct-2410-GGUF"
   # model: "mistralai/Ministral-8B-Instruct-2410"
   # model: "prince-canuma/Ministral-8B-Instruct-2410-HF"
   # model: "MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF"
   # model: "meta-llama/Llama-3.2-3B-Instruct"
-
 
 ML_Applications:
   query: machine learning applications in ocean sciences
