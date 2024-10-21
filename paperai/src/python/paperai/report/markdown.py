@@ -123,3 +123,14 @@ class Markdown(Report):
     def separator(self, output):
         # Write section separator
         self.write(output, "")
+
+    def write_summary(self, output, summary):
+        """
+        Writes the summary to the output file.
+
+        Args:
+            output: output file
+            summary: summary text
+        """
+        self.write(output, summary)
+        self.write(output, "\n")

@@ -40,6 +40,9 @@ class Task:
         # Extract queries
         queries = Task.queries(config)
 
+        # Add summary generation option
+        config["options"]["generate_summary"] = config.get("options", {}).get("generate_summary", True)
+
         return config["name"], config.get("options", {}), queries, outdir
 
     @staticmethod

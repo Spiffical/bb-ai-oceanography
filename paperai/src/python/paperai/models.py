@@ -28,7 +28,7 @@ class Models:
 
         dbfile = os.path.join(path, "articles.sqlite")
 
-        if os.path.isfile(os.path.join(path, "config")):
+        if os.path.isfile(os.path.join(path, "config.json")):
             print(f"Loading model from {path}")
             embeddings = Embeddings()
             embeddings.load(path)

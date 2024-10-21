@@ -5,6 +5,7 @@ Query module
 import datetime
 import re
 import sys
+from dateutil import parser
 
 from rich.console import Console
 
@@ -179,23 +180,40 @@ class Query:
     @staticmethod
     def date(date):
         """
-        Formats a date string.
+        Formats a date string or integer.
 
         Args:
-            date: input date string
+            date: input date (string or integer)
 
         Returns:
             formatted date
         """
 
-        if date:
-            date = datetime.datetime.strptime(date, "%Y-%m-%d %H:%M:%S")
+        if date is not None:
+            try:
+                # If date is an integer, assume it's a year
+                if isinstance(date, int):
+                    return str(date)
 
-            # 1/1 dates had no month/day specified, use only year
-            if date.month == 1 and date.day == 1:
-                return date.strftime("%Y")
+                # If it's a string, try parsing it
+                if isinstance(date, str):
+                    # Try parsing with dateutil parser
+                    parsed_date = parser.parse(date, default=datetime.datetime(1, 1, 1))
+                    
+                    # If only year is provided
+                    if parsed_date.year != 1 and parsed_date.month == 1 and parsed_date.day == 1:
+                        return str(parsed_date.year)
+                    
+                    # If year and month are provided
+                    if parsed_date.year != 1 and parsed_date.month != 1 and parsed_date.day == 1:
+                        return parsed_date.strftime("%Y-%m")
+                    
+                    # If full date is provided
+                    return parsed_date.strftime("%Y-%m-%d")
 
-            return date.strftime("%Y-%m-%d")
+            except (ValueError, TypeError, parser.ParserError):
+                # If parsing fails, return the original input as a string
+                return str(date)
 
         return None
 
