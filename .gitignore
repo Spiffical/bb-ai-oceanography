@@ -175,26 +175,12 @@ chrome*
 kermit*
 findpapers_env/
 grobid*/
-paperetl*/
+paperetlmodels/
+paperaimodels/
 logs*/
 downloadsnew/*
 elsapy_dev/config.json
 elsapy_dev/exampleProg.py
-paperai/articles.sqlite
-paperai/config.json
-paperai/embeddings
-paperai/ids
-paperai/machine_learning_in_oceanography.md
-paperai/qp7k5fz9
-paperai/Report on Hydrophones for Ship Detection in Oceanography.md
-paperai/Report on ML in Oceanography.md
-paperai/report_oceans_extensive.yml
-paperai/report_oceans.yml
-paperai/report1.yml
-paperai/Report2.md
-paperai/report2.yml
-paperai/report3.yml
-paperai/vectors.magnitude
 notebooks/txtai_rag.ipynb
 downloadscrossref/10.1038_s41467-019-12808-z.pdf
 downloadscrossref/10.1038_s41467-020-14538-z.pdf
