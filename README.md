@@ -148,8 +148,8 @@ One of the major improvements to `paperai`'s report generation made in this repo
 - `utils/`: Utility functions for API calls, file handling, and PDF processing
 - `notebooks/`: Jupyter notebooks for data analysis and visualization
 - `config/`: Configuration files, including the custom GROBID configuration
-- `paperetl/`: The paperetl package for extracting content from PDFs
-- `paperai/`: The paperai package for analyzing and generating reports
+- `paperetl/`: The modified paperetl package for extracting content from PDFs
+- `paperai/`: The modified paperai package for analyzing and generating reports
 
 ## Acknowledgments
 
