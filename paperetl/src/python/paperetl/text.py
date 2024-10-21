@@ -70,3 +70,17 @@ class Text:
         text = re.sub(r" {2,}|\.{2,}", " ", text)
 
         return text
+    
+    @staticmethod
+    def paragraph_tokenize(text):
+        """
+        Splits text into paragraphs.
+
+        Args:
+            text: input text
+
+        Returns:
+            list of paragraphs
+        """
+        print("Text to be paragraph tokenized: ", text)
+        return [p.strip() for p in text.split("\n\n") if p.strip()]

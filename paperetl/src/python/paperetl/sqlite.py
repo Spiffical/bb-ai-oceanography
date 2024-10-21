@@ -28,6 +28,7 @@ class SQLite(Database):
         "tags",
         "reference",
         "entry",
+        "domain",
     )
 
     # Articles schema
@@ -43,6 +44,7 @@ class SQLite(Database):
         "Tags": "TEXT",
         "Reference": "TEXT",
         "Entry": "DATETIME",
+        "Domain": "TEXT",
     }
 
     # Sections schema
@@ -110,7 +112,8 @@ class SQLite(Database):
             self.execute(SQLite.CREATE_INDEX)
         else:
             # Restore section index id
-            self.sindex = int(self.cur.execute(SQLite.SECTION_COUNT).fetchone()[0]) + 1
+            result = self.cur.execute(SQLite.SECTION_COUNT).fetchone()[0]
+            self.sindex = int(result) + 1 if result is not None else 1
 
         # Start transaction
         self.cur.execute("BEGIN")
@@ -128,12 +131,22 @@ class SQLite(Database):
 
             for name, text in article.sections:
                 # Section row - id, article, name, text
-                self.insert(
-                    SQLite.SECTIONS,
-                    "sections",
-                    (self.sindex, article.uid(), name, text),
-                )
-                self.sindex += 1
+                try:
+                    self.insert(
+                        SQLite.SECTIONS,
+                        "sections",
+                        (self.sindex, article.uid(), name, text),
+                    )
+                    self.sindex += 1
+                except sqlite3.IntegrityError:
+                    # If a duplicate ID is encountered, generate a new one
+                    self.sindex = self.get_max_section_id() + 1
+                    self.insert(
+                        SQLite.SECTIONS,
+                        "sections",
+                        (self.sindex, article.uid(), name, text),
+                    )
+                    self.sindex += 1
 
     def savearticle(self, article):
         """
@@ -148,8 +161,11 @@ class SQLite(Database):
         """
 
         try:
+            # Convert article.metadata tuple to a dictionary
+            metadata_dict = dict(zip(SQLite.ARTICLES, article.metadata))
+            
             # Article row
-            self.insert(SQLite.ARTICLES, "articles", article.metadata)
+            self.insert(SQLite.ARTICLES, "articles", metadata_dict)
         except sqlite3.IntegrityError:
             # Duplicate detected get entry date to determine action
             entry = parser.parse(
@@ -163,7 +179,7 @@ class SQLite(Database):
             # Delete and re-insert article
             self.cur.execute(SQLite.DELETE_ARTICLE, [article.uid()])
             self.cur.execute(SQLite.DELETE_SECTIONS, [article.uid()])
-            self.insert(SQLite.ARTICLES, "articles", article.metadata)
+            self.insert(SQLite.ARTICLES, "articles", metadata_dict)
 
         return True
 
@@ -227,31 +243,21 @@ class SQLite(Database):
         self.cur.execute(insert, self.values(table, row, columns))
 
     def values(self, table, row, columns):
-        """
-        Formats and converts row into database types based on table schema.
-
-        Args:
-            table: table schema
-            row: row tuple
-            columns: column names
-
-        Returns:
-            Database schema formatted row tuple
-        """
-
         values = []
-        for x, column in enumerate(columns):
-            # Get value
-            value = row[x]
-
-            if table[column].startswith("INTEGER"):
-                values.append(int(value) if value else 0)
-            elif table[column].startswith("BOOLEAN"):
-                values.append(1 if value == "TRUE" else 0)
-            elif table[column].startswith("TEXT"):
-                # Clean empty text and replace with None
-                values.append(value if value and len(value.strip()) > 0 else None)
+        for i, column in enumerate(columns):
+            if isinstance(row, dict):
+                value = row.get(column)
+            elif isinstance(row, tuple):
+                value = row[i] if i < len(row) else None
             else:
-                values.append(value)
-
+                raise ValueError("Row must be either a dictionary or a tuple")
+            
+            if isinstance(value, list):
+                value = ', '.join(map(str, value))  # Convert list to comma-separated string
+            values.append(value if value and (not isinstance(value, str) or len(str(value).strip()) > 0) else None)
         return values
+
+    def get_max_section_id(self):
+        self.cur.execute("SELECT MAX(Id) FROM sections")
+        max_id = self.cur.fetchone()[0]
+        return max_id if max_id is not None else 0

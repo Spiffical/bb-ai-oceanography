@@ -4,14 +4,16 @@ TEI (Text Encoding Initiative) XML processing module
 
 import datetime
 import hashlib
+import os
 
 from bs4 import BeautifulSoup
 from dateutil import parser
-from nltk.tokenize import sent_tokenize
 
 from ..schema.article import Article
 from ..table import Table
 from ..text import Text
+from .metadata import verify_and_get_metadata
+
 
 
 class TEI:
@@ -35,6 +37,7 @@ class TEI:
         soup = BeautifulSoup(stream, "lxml")
 
         title = soup.title.text
+        domain = None 
 
         # Extract article metadata
         (
@@ -45,6 +48,24 @@ class TEI:
             affiliation,
             reference,
         ) = TEI.metadata(soup)
+
+        # Extract DOI from filename if available and use it to get metadata
+        if source:
+            # Replace underscores with forward slashes to reconstruct the original DOI
+            doi = os.path.splitext(os.path.basename(source))[0].replace('_', '/')
+            
+            result = verify_and_get_metadata(doi)
+
+            if result['is_valid']:
+                published = result['published_date'] or published
+                authors = result['authors'] or authors
+                affiliations = result['affiliations'] or affiliations
+                affiliation = result['primary_affiliation'] or affiliation
+                reference = f"https://doi.org/{doi}" if doi else reference
+                publication = result['publication_title'] or publication
+                domain = result['domain'] or domain
+            else:
+                print(f"Invalid DOI or unable to retrieve metadata for {doi}")
 
         # Validate parsed data
         if not title and not reference:
@@ -76,6 +97,7 @@ class TEI:
             "PDF",
             reference,
             parser.parse(datetime.datetime.now().strftime("%Y-%m-%d")),
+            domain,
         )
 
         return Article(metadata, sections)
@@ -199,8 +221,9 @@ class TEI:
             abstract = Text.transform(abstract)
             abstract = abstract.replace("\n", " ")
 
-            sections.extend([("ABSTRACT", x) for x in sent_tokenize(abstract)])
-
+            # sections.extend([("ABSTRACT", x) for x in sent_tokenize(abstract)])
+            # sections.extend([("ABSTRACT", x) for x in Text.paragraph_tokenize(abstract)])
+            sections.extend([("ABSTRACT", abstract)])
         return sections
 
     @staticmethod
@@ -230,26 +253,26 @@ class TEI:
             else:
                 name = None
 
-            text = " ".join(
-                [str(e.text) if hasattr(e, "text") else str(e) for e in children]
-            )
-            text = text.replace("\n", " ")
+            # Extract paragraphs
+            paragraphs = section.find_all('p')
+            for para in paragraphs:
+                text = para.get_text(strip=True)
+                
+                # Transform and clean text
+                text = Text.transform(text)
 
-            # Transform and clean text
-            text = Text.transform(text)
-
-            # Split text into sentences, transform text and add to sections
-            sections.extend([(name, x) for x in sent_tokenize(text)])
+                # Add paragraph to sections
+                # sections.extend([(name, x) for x in sent_tokenize(text)])
+                sections.extend([(name, text)])
 
         # Extract text from tables
         for i, figure in enumerate(soup.find("text").find_all("figure")):
-            # Use XML Id (if available) as figure name to ensure figures are uniquely named
             name = figure.get("xml:id")
             name = name.upper() if name else f"FIGURE_{i}"
 
-            # Search for table
             table = figure.find("table")
             if table:
-                sections.extend([(name, x) for x in Table.extract(table)])
+                table_text = Table.extract(table)
+                sections.extend([(name, x) for x in table_text])
 
         return sections

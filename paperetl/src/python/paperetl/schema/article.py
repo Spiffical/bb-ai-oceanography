@@ -21,6 +21,7 @@ class Article:
         "tags",
         "reference",
         "entry",
+        "domain",
     )
 
     # Sections schema
