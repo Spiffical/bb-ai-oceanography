@@ -33,6 +33,13 @@ The project aims to provide a comprehensive analysis of the current state of mac
 - Rate-limited API calls to respect usage policies
 - Machine learning-based analysis and report generation using paperai
 
+Changes made to `paperetl`:
+- Extracting paragraphs instead of sentences for improved summary quality
+- Improved error handling
+
+Changes made to `paperai`  :
+- Added a properly cited summary section, using an LLM, to the report
+
 ## Getting Started
 
 ### Prerequisites
