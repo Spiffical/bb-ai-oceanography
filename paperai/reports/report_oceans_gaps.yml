@@ -1,12 +1,12 @@
-name: ML in Ocean Sciences Report ministral
+name: ML in Ocean Sciences Report -- demo
 
 options:
   topn: 100
   render: md
   qa: "deepset/roberta-base-squad2"
   generate_summary: true
-  # model: "google/gemma-2-9b-it"  # This one seems to give the best results overall
-  model: "bartowski/Ministral-8B-Instruct-2410-GGUF"
+  model: "google/gemma-2-9b-it"  # This one seems to give the best results overall
+  # model: "bartowski/Ministral-8B-Instruct-2410-GGUF"
   # model: "mistralai/Ministral-8B-Instruct-2410"
   # model: "prince-canuma/Ministral-8B-Instruct-2410-HF"
   # model: "MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF"

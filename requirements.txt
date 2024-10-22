@@ -5,3 +5,4 @@ unpywall
 arxiv
 python-dotenv
 pandas
+txtai
