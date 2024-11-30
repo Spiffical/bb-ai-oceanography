@@ -10,9 +10,9 @@ This repository is an extended version of Taylor Denouden's [bb-ai-oceanography]
    - [Prerequisites](#prerequisites)
    - [Installation](#installation)
 4. [Usage](#usage)
-   - [Downloading Papers](#downloading-papers)
-   - [Extracting Content with paperetl](#extracting-content-with-paperetl)
-   - [Generating Reports with paperai](#generating-reports-with-paperai)
+   - [Quick Start (Using Pre-processed Model)](#quick-start-using-pre-processed-model)
+   - [Customizing Reports](#customizing-reports)
+   - [Building from Scratch (Optional)](#building-from-scratch-optional)
 5. [Project Structure](#project-structure)
 6. [Acknowledgments](#acknowledgments)
 
@@ -45,10 +45,43 @@ Changes made to `paperai`  :
 ### Prerequisites
 
 - Python 3.7+
-- Docker (for running [GROBID](https://github.com/kermitt2/grobid))
+- Docker
+- Hugging Face account (for accessing models)
 - NVIDIA GPU (optional, for faster processing)
 
 ### Installation
+
+There are two ways to set up this project: using Docker (recommended) or local installation.
+
+#### Option 1: Docker Installation (Recommended)
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/Spiffical/bb-ai-oceanography.git
+   cd bb-ai-oceanography
+   ```
+
+2. [Create a Hugging Face account and get your access token](#setting-up-hugging-face-access) (required for accessing the language models)
+
+3. Create a `.env` file in the project root with your token:
+   ```plaintext
+   HUGGING_FACE_HUB_TOKEN=your_huggingface_token
+   ```
+   
+   Note: The following keys are only needed if you plan to download new papers:
+   ```plaintext
+   ELSEVIER_API_KEY=your_elsevier_api_key
+   SPRINGER_API_KEY=your_springer_api_key
+   WILEY_API_KEY=your_wiley_api_key
+   UNPAYWALL_EMAIL=your_email_address
+   ```
+
+4. Build the Docker image:
+   ```bash
+   docker build -t paperai-custom .
+   ```
+
+#### Option 2: Local Installation
 
 1. Clone the repository:
    ```
@@ -79,11 +112,90 @@ Changes made to `paperai`  :
    UNPAYWALL_EMAIL=your_email_address
    ```
 
+### Setting up Hugging Face Access
+
+1. Create a Hugging Face account at [huggingface.co](https://huggingface.co)
+2. Generate an access token:
+   - Go to your [Hugging Face account settings](https://huggingface.co/settings/tokens)
+   - Click "New token"
+   - Name your token and select "read" access
+   - Copy the generated token
+
+3. Request access to required models:
+   - Visit [google/gemma-2-9b-it](https://huggingface.co/google/gemma-2-9b-it)
+   - Click "Access repository" and accept the terms
+   - Repeat for other gated models used in the project
+
+4. Add your token to the `.env` file as shown in the installation steps above
+
 ## Usage
 
-### Downloading Papers
+### Quick Start (Using Pre-processed Model)
 
-To download papers:
+If you have been provided with a pre-processed model directory:
+
+1. Place the provided model directory in your desired location (e.g., `paperetl/models/your-model-name`)
+
+2. Run the report generation using Docker (recommended):
+   ```bash
+   docker run -v "/path/to/bb-ai-oceanography:/work" paperai-custom python -m paperai.report /work/paperai/reports/report_oceans_gaps.yml 100 md /work/path/to/your/model
+   ```
+   Replace:
+   - `/path/to/bb-ai-oceanography` with the actual path to your project directory
+   - `/work/path/to/your/model` with the path to your model directory (relative to the project root)
+
+   For example, if your model is in `paperetl/models/pdf-oceanai` and you are currently in the `bb-ai-oceanography` directory:
+   ```bash
+   docker run -v "$(pwd):/work" paperai-custom python -m paperai.report /work/paperai/reports/report_oceans_gaps.yml 100 md /work/paperetl/models/pdf-oceanai
+   ```
+
+### Customizing Reports
+
+You can create your own report configuration by creating a new YAML file. Here's an example structure:
+
+```yaml
+name: Your Report Name
+
+options:
+  topn: 100
+  render: md
+  qa: "deepset/roberta-base-squad2"
+  generate_summary: true
+  model: "google/gemma-2-9b-it"  # LLM used for summary generation
+
+Your_Section_Name:
+  query: your search query here
+  columns:
+    - name: Date
+    - name: Study
+    - {name: Custom_Column, query: specific search terms, question: what specific information to extract}
+    - {name: Another_Column, query: more search terms, question: what to extract}
+```
+
+Key components:
+- `name`: Title of your report
+- `options`: General settings for the report
+  - `topn`: Number of results to return
+  - `render`: Output format (md for markdown)
+  - `model`: Which LLM to use for summary generation
+- Sections (like `Your_Section_Name`):
+  - `query`: Main search query for this section
+  - `columns`: What information to extract and how to organize it
+    - Simple columns just need a name
+    - Complex columns can include specific queries and questions for information extraction
+
+Example sections from the default report include:
+- ML Applications in ocean sciences
+- Research gaps and challenges
+- Emerging trends
+
+You can find example report configurations in the `paperai/reports/` directory.
+
+### Building from Scratch (Optional)
+
+If you need to process new papers or build the database from scratch, follow these additional steps:
+
+1. Download papers:
 
 ```
 python scripts/download_papers.py --csv path/to/your/doi_list.csv output_path
@@ -95,9 +207,7 @@ Or for a single DOI:
 python scripts/download_papers.py --doi 10.1016/j.example.2023.123456 output_path
 ```
 
-### Extracting Content with paperetl
-
-1. Start GROBID with the custom configuration:
+2. Start GROBID with the custom configuration:
 
    ```
    sudo docker run --rm --gpus all --init --ulimit core=0 -p 8070:8070 -v /path/to/bb-ai-oceanography/config/grobid.yaml:/opt/grobid/grobid-home/config/grobid.yaml:ro grobid/grobid:0.8.0
@@ -105,7 +215,7 @@ python scripts/download_papers.py --doi 10.1016/j.example.2023.123456 output_pat
 
    Replace `/path/to/bb-ai-oceanography` with the actual path to your project directory.
 
-2. In a separate terminal, run paperetl to extract content and create an SQLite database:
+3. In a separate terminal, run paperetl to extract content and create an SQLite database:
 
    ```
    python -m paperetl.file /path/to/pdfs /path/to/output
@@ -113,9 +223,7 @@ python scripts/download_papers.py --doi 10.1016/j.example.2023.123456 output_pat
 
    Replace `/path/to/pdfs` with the directory containing your downloaded PDFs, and `/path/to/output` with the desired output directory for the SQLite database.
 
-### Generating Reports with paperai
-
-1. Index the extracted content:
+4. Index the extracted content:
 
    ```
    python -m paperai.index /path/to/output
@@ -123,9 +231,7 @@ python scripts/download_papers.py --doi 10.1016/j.example.2023.123456 output_pat
    
    Use the same `/path/to/output` as in the paperetl step.
 
-
-
-2. Generate a report using a YAML configuration file:
+5. Generate a report using a YAML configuration file:
 
    ```
    python -m paperai.report /path/to/report_config.yml 100 md /path/to/output

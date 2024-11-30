@@ -198,7 +198,6 @@ scripts/move_xmls.py
 scripts/test_crossref.py
 scripts/unique_papers.py
 scripts/which_doi.py
-Dockerfile
 bibtex.bib
 0.8.0.zip
 bibtex.bib
