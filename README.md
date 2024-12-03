@@ -1,6 +1,6 @@
 # bb-ai-oceanography: Full-Text Analysis of Machine Learning in Oceanography
 
-This repository is an extended version of Taylor Denouden's [bb-ai-oceanography](https://github.com/taylordenouden/bb-ai-oceanography) project. While the original repository focused on analyzing paper *abstracts* using Large Language Models (LLMs), this fork expands the scope to include *full-text* analysis and fully-cited report generation of scientific papers related to machine learning applications in oceanography. Report generation could absolutely benefit from the work previously done to identify topic areas, e.g. the report queries could focus on specific topic areas.
+This repository is an extended version of Taylor Denouden's [bb-ai-oceanography](https://github.com/tayden/bb-ai-oceanography/) project. While the original repository focused on analyzing paper *abstracts* using Large Language Models (LLMs), this fork expands the scope to include *full-text* analysis and fully-cited report generation of scientific papers related to machine learning applications in oceanography. Report generation could absolutely benefit from the work previously done to identify topic areas, e.g. the report queries could focus on specific topic areas.
 
 ## Table of Contents
 
