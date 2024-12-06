@@ -1,0 +1,44 @@
+# Use Python slim image for minimal size
+FROM python:3.10-slim
+
+# Install system dependencies and build tools
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y \
+        git \
+        build-essential \
+        cmake \
+        gcc \
+        g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install required packages - grouped by functionality
+RUN pip install --no-cache-dir \
+    transformers \
+    huggingface_hub \
+    tqdm \
+    openai \
+    regex \
+    python-dateutil \
+    txtai[pipeline]
+
+# Install PyTorch CPU version separately
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# Setup HuggingFace token if provided during build
+ARG HUGGING_FACE_HUB_TOKEN
+RUN if [ -n "$HUGGING_FACE_HUB_TOKEN" ]; then \
+    huggingface-cli login --token=$HUGGING_FACE_HUB_TOKEN; \
+    fi
+
+# Copy local project files
+WORKDIR /work
+COPY . .
+
+# Install paperetl and paperai
+RUN cd paperetl && pip install -e . \
+    && cd ../paperai && pip install -e .
+
+# Create necessary directories
+RUN mkdir -p paperetl/data paperetl/report
+
+ENTRYPOINT ["python"]

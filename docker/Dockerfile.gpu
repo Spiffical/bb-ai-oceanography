@@ -1,0 +1,79 @@
+# Use CUDA-enabled base image
+ARG CUDA_IMAGE="12.1.0-devel-ubuntu22.04"
+FROM nvidia/cuda:${CUDA_IMAGE}
+
+# Create cache directory early
+RUN mkdir -p /root/.cache/huggingface
+
+# Install system dependencies - grouped to optimize caching
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y \
+        git \
+        build-essential \
+        python3 \
+        python3-pip \
+        gcc \
+        wget \
+        bash \
+        ocl-icd-opencl-dev \
+        opencl-headers \
+        clinfo \
+        libclblast-dev \
+        libopenblas-dev \
+        curl \
+    && mkdir -p /etc/OpenCL/vendors \
+    && echo "libnvidia-opencl.so.1" > /etc/OpenCL/vendors/nvidia.icd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Ollama
+RUN curl -fsSL https://ollama.com/install.sh | sh
+
+# Set CUDA build flags
+ENV CUDA_DOCKER_ARCH=all \
+    GGML_CUDA=1
+
+# Install Python packages in stages to better utilize cache
+RUN python3 -m pip install --no-cache-dir --upgrade pip pytest cmake scikit-build setuptools fastapi uvicorn
+
+# Install ML packages separately
+RUN pip install --no-cache-dir \
+    torch \
+    bitsandbytes \
+    accelerate \
+    transformers \
+    openai \
+    regex \
+    python-dateutil \
+    txtai[pipeline]
+
+# Install llama-cpp-python with CUDA support
+RUN CMAKE_ARGS="-DGGML_CUDA=on" pip install --no-cache-dir llama-cpp-python
+
+# Setup HuggingFace token if provided during build
+ARG HUGGING_FACE_HUB_TOKEN
+RUN if [ -n "$HUGGING_FACE_HUB_TOKEN" ]; then \
+    huggingface-cli login --token=$HUGGING_FACE_HUB_TOKEN; \
+    fi
+
+# Copy local project files
+WORKDIR /work
+COPY . .
+
+# Install projects
+RUN cd paperetl && pip install -e . \
+    && cd ../paperai && pip install -e .
+
+# Create necessary directories
+RUN mkdir -p paperetl/data paperetl/report
+
+# Declare volume for model cache
+VOLUME /root/.cache/huggingface
+
+# Create startup script to run Ollama service and then execute command
+RUN echo '#!/bin/bash\n\
+ollama serve &\n\
+sleep 5\n\
+exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

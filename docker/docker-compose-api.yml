@@ -1,0 +1,17 @@
+services:
+  paperai:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    volumes:
+      - .:/app
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app/paperai/src/python
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    env_file:
+      - .env
+    tty: true
+    stdin_open: true

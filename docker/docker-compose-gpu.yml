@@ -1,0 +1,34 @@
+services:
+  paperai:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+    volumes:
+      - .:/app
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app/paperai/src/python
+      - DOCKER_BUILDKIT=1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+      - OLLAMA_HOST=http://localhost:11434
+    env_file:
+      - .env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    tty: true
+    stdin_open: true
+
+volumes:
+  ollama_data:
