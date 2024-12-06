@@ -1,7 +1,7 @@
 name: ML in Ocean Sciences Report -- demo
 
 options:
-  topn: 2
+  topn: 20
   render: md
   qa: "deepset/roberta-base-squad2"
   generate_summary: true
