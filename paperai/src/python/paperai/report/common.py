@@ -5,6 +5,7 @@ Report module
 import regex as re
 from datetime import datetime
 from dateutil import parser
+from tqdm import tqdm
 
 from txtai.pipeline import Extractor, Labels, Similarity, Tokenizer
 
@@ -52,12 +53,25 @@ class Report:
             options["qa"] if options["qa"] else "NeuML/bert-small-cord19qa",
             minscore=options.get("minscore"),
             mintokens=options.get("mintokens"),
-            context=options.get("context"),
+            context=options.get("context", 512),
         )
 
         # Initialize the Summarizer
-        model_name = options.get("model", "google/gemma-2-9b-it")
-        self.summarizer = Summarizer(model_name)
+        llm_mode = options.get("llm_mode", "local")
+        if llm_mode == "api":
+            model_name = options.get("api", {}).get("model", "gpt-4o-mini")
+            api_provider = options.get("api", {}).get("provider", "openai")
+        else:
+            local_opts = options.get("local", {})
+            model_name = local_opts.get("model", "gemma2:9b")
+            provider = local_opts.get("provider", "ollama")
+            gpu_strategy = local_opts.get("gpu_strategy", "auto")
+        self.summarizer = Summarizer(
+            llm_name=model_name,
+            mode=llm_mode,
+            gpu_strategy=gpu_strategy if llm_mode == "local" else None,
+            provider=api_provider if llm_mode == "api" else provider if llm_mode == "local" else None
+        )
 
     def generate_summary(self, results, topn, query):
         """
@@ -158,18 +172,30 @@ class Report:
 
     def build(self, queries, options, output):
         """
-        Builds a report using a list of input queries
+        Builds a report using a list of input queries.
+
+        Processes each query to generate a report section containing:
+        - Query details
+        - Highlights from top results
+        - Generated summary with citations
+        - Detailed articles table
 
         Args:
-            queries: queries to execute
-            options: report options
-            output: output I/O object
-        """
+            queries: List of query configurations to process
+            options: Dictionary of report generation options
+            output: Path where the report will be saved
 
+        Prints:
+            - Start message when report generation begins
+            - Progress bars for query processing
+            - Completion message with output file location
+        """
+        print("\n=== Starting Report Generation ===")
+        
         # Default to 50 documents if not specified
         topn = options.get("topn", 50)
 
-        for name, config in queries:
+        for name, config in tqdm(queries, desc="Processing queries"):
             query = config["query"]
             columns = config["columns"]
 
@@ -194,15 +220,12 @@ class Report:
             self.separator(output)
 
             # Generate summary
-            summary, citation_details = self.generate_summary(results, int(topn / 5), query)
+            summary, citation_details = self.generate_summary(results, 20, query)
             formatted_summary = self.format_citations(summary, citation_details)
 
             # Write summary section
             self.section(output, "Summary")
             self.write(output, formatted_summary)
-            
-            print(f"\nOriginal summary: {summary}")
-            print(f"\nFormatted summary: {formatted_summary}\n")
 
             # Separator between summary and articles
             self.separator(output)
@@ -218,6 +241,12 @@ class Report:
 
             # Write section separator
             self.separator(output)
+
+        # Add completion message with clean file path
+        output_path = output.name if hasattr(output, 'name') else str(output)
+        # Convert /work/reports to ./reports for user clarity
+        output_path = output_path.replace('/work/reports', './reports')
+        print(f"\n✓ Report saved to: {output_path}")
 
     def highlights(self, output, results, topn):
         """
@@ -263,16 +292,13 @@ class Report:
         # Collect matching rows
         rows = []
 
-        for x, uid in enumerate(documents):
+        for uid in tqdm(documents, desc="Processing documents", unit="doc"):
             # Get article metadata
             self.cur.execute(
                 "SELECT Published, Title, Reference, Publication, Source, Entry, Id FROM articles WHERE id = ?",
                 [uid],
             )
             article = self.cur.fetchone()
-
-            if x and x % 100 == 0:
-                print(f"Processed {x} documents", end="\r")
 
             # Calculate derived fields
             calculated = self.calculate(uid, metadata)
@@ -281,9 +307,7 @@ class Report:
             rows.append(self.buildRow(article, documents[uid], calculated))
 
         # Print report by published desc
-        for row in sorted(rows, key=lambda x: x["Date"], reverse=True):
-            # print(f"Available columns: {list(row.keys())}")  # Debug print
-            # Convert row dict to list
+        for row in tqdm(sorted(rows, key=lambda x: x["Date"], reverse=True), desc="Writing rows"):
             row = [row[column] for column in self.names]
 
             # Write out row
@@ -291,18 +315,31 @@ class Report:
 
     def calculate(self, uid, metadata):
         """
-        Builds a dict of calculated fields for a given document. This method calculates
-        constant field columns and derived query columns. Derived query columns run through
-        an embedding search and either run an additional QA query to extract a value or
-        use the top n embedding search matches.
-
-        Args:
-            uid: article id
-            metadata: query metadata
-
-        Returns:
-            {name: value} containing derived column values
+        Builds a dict of calculated fields for a given document.
         """
+        # Get article metadata and abstract
+        self.cur.execute("""
+            SELECT a.Title, s.Text as Abstract 
+            FROM articles a
+            LEFT JOIN sections s ON a.id = s.article 
+            WHERE a.id = ? AND s.Name = 'ABSTRACT'
+            LIMIT 1
+        """, [uid])
+        
+        result = self.cur.fetchone()
+        title = result[0] if result else ""
+        abstract = result[1] if result else ""
+
+        # Get introduction for additional context
+        self.cur.execute("""
+            SELECT Text 
+            FROM sections 
+            WHERE article = ? AND Name = 'INTRODUCTION'
+            LIMIT 1
+        """, [uid])
+        
+        intro = self.cur.fetchone()
+        introduction = intro[0] if intro else ""
 
         # Parse column parameters
         fields, params = self.params(metadata)
@@ -328,16 +365,11 @@ class Report:
         # Run all extractor queries against document text
         results = self.extractor.query([query for _, query, _ in queries], texts)
 
-        # Only execute embeddings queries for columns with matches set
+        # Process queries with matches
         for x, (name, query, matches) in enumerate(queries):
             if results[x]:
-                # Get topn text matches
                 topn = [text for _, text, _ in results[x]][:matches]
-
-                # Join results into String and return
-                value = [
-                    self.resolve(params, sections, uid, name, value) for value in topn
-                ]
+                value = [self.resolve(params, sections, uid, name, value) for value in topn]
                 fields[name] = "\n\n".join(value) if value else ""
             else:
                 fields[name] = ""
@@ -345,22 +377,44 @@ class Report:
         # Add extraction fields
         if extractions:
             for name, value in self.extractor(extractions, texts):
-                # Resolves the full value based on column parameters
-                fields[name] = (
-                    self.resolve(params, sections, uid, name, value) if value else ""
-                )
+                fields[name] = self.resolve(params, sections, uid, name, value) if value else ""
 
-        # Add question fields
+        # Add question fields with enhanced context
         names, qa, contexts, snippets = [], [], [], []
         for name, query, question, snippet in questions:
             names.append(name)
             qa.append(question)
-            contexts.append(fields[query])
+            
+            # Build enhanced context by combining:
+            # 1. Title and abstract for high-level context
+            # 2. Introduction for background
+            # 3. Field-specific context
+            field_context = fields[query] if query in fields else ""
+            
+            # Get relevant sections using similarity search
+            self.cur.execute("""
+                SELECT Text 
+                FROM sections 
+                WHERE article = ? AND Name NOT IN ('ABSTRACT', 'INTRODUCTION')
+            """, [uid])
+            
+            other_sections = [row[0] for row in self.cur.fetchall()]
+            relevant_sections = self.extractor.query([question], other_sections)[0] if other_sections else []
+            relevant_text = "\n\n".join([text for _, text, _ in relevant_sections[:2]]) if relevant_sections else ""
+            
+            enhanced_context = (
+                f"Title: {title}\n\n"
+                f"Abstract: {abstract}\n\n"
+                f"Introduction: {introduction}\n\n"
+                f"Relevant Context: {field_context}\n\n"
+                f"Additional Context: {relevant_text}"
+            ).strip()
+            
+            contexts.append(enhanced_context)
             snippets.append(snippet)
 
         answers = self.extractor.answers(qa, contexts)
         for (name, answer), snippet in zip(answers, snippets):
-            # Resolves the full value based on column parameters
             value = answer if isinstance(answer, str) else answer[0]
             fields[name] = self.resolve(params, sections, uid, name, value) if value else ""
 
