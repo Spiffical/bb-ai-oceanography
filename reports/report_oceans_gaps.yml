@@ -1,16 +1,22 @@
 name: ML in Ocean Sciences Report -- demo
 
 options:
-  topn: 100
+  topn: 2
   render: md
   qa: "deepset/roberta-base-squad2"
   generate_summary: true
-  model: "google/gemma-2-9b-it"  # This one seems to give the best results overall
-  # model: "bartowski/Ministral-8B-Instruct-2410-GGUF"
-  # model: "mistralai/Ministral-8B-Instruct-2410"
-  # model: "prince-canuma/Ministral-8B-Instruct-2410-HF"
-  # model: "MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF"
-  # model: "meta-llama/Llama-3.2-3B-Instruct"
+  llm_mode: "api"  # "api" or "local"
+  
+  # API Settings (used if llm_mode is "api")
+  api:
+    provider: "openai"  # "openai" or "huggingface"
+    model: "gpt-4o-mini"
+  
+  # Local Settings (used if llm_mode is "local")
+  local:
+    provider: "ollama"  # "ollama" or "huggingface"
+    model: "mistral:instruct"  # or any other Ollama model (https://ollama.com/library?sort=newest) or Hugging Face model (https://huggingface.co/models)
+    gpu_strategy: "auto"  # "auto", "full", or "balanced" (only needed if provider is "huggingface")
 
 ML_Applications:
   query: machine learning applications in ocean sciences
