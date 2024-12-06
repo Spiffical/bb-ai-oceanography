@@ -216,3 +216,5 @@ scripts/download_paper_pdfs_deprecated.py
 
 PyPaperBot/
 SciDownl/
+tests/test_inference.py
+reports/ML in Ocean Sciences Report -- demo.md
