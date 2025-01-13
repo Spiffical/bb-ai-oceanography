@@ -262,7 +262,7 @@ Replace:
 
 For example, if you want to use the OpenAI API, your embeddings model is in `paperetl/models/pdf-oceanai`, your report configuration file is in `reports/report_oceans_gaps.yml`, and you are currently in the `bb-ai-oceanography` directory:
 ```bash
-docker run --rm -v "$(pwd):/work" paperai-api python -m paperai.report /work/reports/report_oceans_gaps.yml /work/paperetl/models/pdf-oceanai
+docker run --rm -v "$(pwd):/work" paperai-api -m paperai.report /work/reports/report_oceans_gaps.yml /work/paperetl/models/pdf-oceanai
 ```
 
 ### Building from Scratch (Optional)
