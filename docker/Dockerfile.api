@@ -1,5 +1,17 @@
-# Use Python slim image for minimal size
-FROM python:3.10-slim
+# Build args must be declared before FROM when used in FROM
+ARG USE_GPU=0
+
+# Base images
+FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04 AS cuda-base
+FROM python:3.10-slim AS cpu-base
+
+# Select base image
+FROM base-image-${USE_GPU:+gpu}${USE_GPU:-cpu} AS final
+FROM cuda-base AS base-image-gpu
+FROM cpu-base AS base-image-cpu
+
+# Re-declare ARG after FROM to make it available in the build
+ARG USE_GPU
 
 # Install system dependencies and build tools
 RUN apt-get update && apt-get upgrade -y \
@@ -21,13 +33,11 @@ RUN pip install --no-cache-dir \
     python-dateutil \
     txtai[pipeline]
 
-# Install PyTorch CPU version separately
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
-
-# Setup HuggingFace token if provided during build
-ARG HUGGING_FACE_HUB_TOKEN
-RUN if [ -n "$HUGGING_FACE_HUB_TOKEN" ]; then \
-    huggingface-cli login --token=$HUGGING_FACE_HUB_TOKEN; \
+# Install PyTorch with appropriate version
+RUN if [ "${USE_GPU}" = "1" ]; then \
+        pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121; \
+    else \
+        pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu; \
     fi
 
 # Copy local project files
