@@ -4,6 +4,7 @@ import csv
 import sys
 from dotenv import load_dotenv
 import argparse
+from tqdm import tqdm
 
 # Add the project root directory to the Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -52,11 +53,19 @@ def download_full_text(doi, title, base_output_dir):
     xml_output_path = generate_output_path(doi, 'xml', base_output_dir)
     pdf_output_path = generate_output_path(doi, 'pdf', base_output_dir)
     
+    # Ensure XML directory exists
+    xml_dir = os.path.dirname(xml_output_path)
+    os.makedirs(xml_dir, exist_ok=True)
+    
+    # Ensure PDF directory exists
+    pdf_dir = os.path.dirname(pdf_output_path)
+    os.makedirs(pdf_dir, exist_ok=True)
+    
     xml_exists = os.path.exists(xml_output_path)
     pdf_exists = os.path.exists(pdf_output_path)
     
-    if xml_exists and pdf_exists:
-        logger.info(f"Both XML and PDF already exist for DOI {doi}. Skipping download.")
+    if xml_exists or pdf_exists:
+        logger.info(f"Either XML or PDF already exists for DOI {doi}. Skipping download.")
         return True, True
     
     xml_success = xml_exists
@@ -212,8 +221,11 @@ def process_csv(csv_path, base_output_dir):
         if 'DOI' not in reader.fieldnames or 'Title' not in reader.fieldnames:
             logger.error("CSV file does not contain both 'DOI' and 'Title' columns")
             return
-
-        for row in reader:
+            
+        # Convert reader to list to get total count and enable progress bar
+        rows = list(reader)
+        
+        for row in tqdm(rows, desc="Downloading papers", unit="paper"):
             doi = row['DOI']
             title = row['Title']
             logger.info(f"Processing DOI: {doi}, Title: {title}")

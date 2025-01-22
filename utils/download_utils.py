@@ -401,7 +401,7 @@ def get_full_text_arxiv(doi=None, title=None, max_retries=5, initial_wait=1, max
         search_query = f'ti:"{title}"'
     else:
         return False, "Either DOI or title must be provided"
-    
+
     client = arxiv.Client()
     
     wait_time = initial_wait
@@ -415,7 +415,7 @@ def get_full_text_arxiv(doi=None, title=None, max_retries=5, initial_wait=1, max
             
             if results:
                 paper = results[0]
-                print(f"Paper title: {paper.title}")  # Print the title of the paper
+                print(f"Paper title: {paper.title}")
                 
                 # Compare titles if a title was provided
                 if title and not titles_are_similar(title, paper.title):
@@ -436,15 +436,12 @@ def get_full_text_arxiv(doi=None, title=None, max_retries=5, initial_wait=1, max
             
             logger.info("No matching entry found in arXiv response")
             return False, "Full text not found in arXiv"
-        
-        except arxiv.arxiv.HTTPError as e:
+
+        except Exception as e:
             logger.warning(f"Network error when querying arXiv (attempt {attempt + 1}): {str(e)}")
             if attempt == max_retries - 1:
                 return False, f"Network error: {str(e)}"
             wait_time = min(max_wait, wait_time * 2)
-        except Exception as e:
-            logger.error(f"Unexpected error when querying arXiv: {str(e)}")
-            return False, f"Unexpected error: {str(e)}"
 
     return False, "Max retries reached"
 
@@ -454,13 +451,13 @@ def get_doi_from_title(title):
     
     # First, try to find DOI using habanero
     doi, url, found_title = find_doi_with_habanero(title)
-    if doi and titles_are_similar(title, found_title):
+    if doi:
         logging.info(f"DOI found with habanero: {doi}")
         return doi
     
     # If not found with habanero or title doesn't match, try OpenAlex
     doi, url, found_title = find_doi_with_openalex(title)
-    if doi and titles_are_similar(title, found_title):
+    if doi:
         logging.info(f"DOI found with OpenAlex: {doi}")
         return doi
     
