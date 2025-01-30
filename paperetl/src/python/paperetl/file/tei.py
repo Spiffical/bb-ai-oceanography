@@ -5,6 +5,7 @@ TEI (Text Encoding Initiative) XML processing module
 import datetime
 import hashlib
 import os
+import logging
 
 from bs4 import BeautifulSoup
 from dateutil import parser
@@ -14,7 +15,9 @@ from ..table import Table
 from ..text import Text
 from .metadata import verify_and_get_metadata
 
-
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class TEI:
     """
@@ -35,50 +38,61 @@ class TEI:
         """
 
         soup = BeautifulSoup(stream, "lxml")
-
-        title = soup.title.text
+        title = soup.title.text if soup.title else None
         domain = None 
+        reference = None
+        published, publication, authors, affiliations, affiliation = None, None, None, None, None
 
-        # Extract article metadata
-        (
-            published,
-            publication,
-            authors,
-            affiliations,
-            affiliation,
-            reference,
-        ) = TEI.metadata(soup)
-
-        # Extract DOI from filename if available and use it to get metadata
+        # First get DOI from filename if available - this is our primary source of truth
         if source:
             # Replace underscores with forward slashes to reconstruct the original DOI
-            doi = os.path.splitext(os.path.basename(source))[0].replace('_', '/')
+            filename_doi = os.path.splitext(os.path.basename(source))[0].replace('_', '/')
+            logger.info(f"Using DOI from filename: {filename_doi}")
+            reference = f"https://doi.org/{filename_doi}"
             
-            result = verify_and_get_metadata(doi)
+            # Try to get additional metadata from CrossRef, but don't fail if we can't
+            try:
+                result = verify_and_get_metadata(filename_doi)
+                if result['is_valid']:
+                    logger.info(f"Successfully retrieved additional metadata for DOI: {filename_doi}")
+                    published = result['published_date']
+                    authors = result['authors']
+                    affiliations = result['affiliations']
+                    affiliation = result['primary_affiliation']
+                    publication = result['publication_title']
+                    domain = result['domain']
+                else:
+                    logger.info(f"Could not retrieve additional metadata for DOI: {filename_doi}")
+            except Exception as e:
+                logger.info(f"Error retrieving additional metadata for DOI {filename_doi}: {str(e)}")
 
-            if result['is_valid']:
-                published = result['published_date'] or published
-                authors = result['authors'] or authors
-                affiliations = result['affiliations'] or affiliations
-                affiliation = result['primary_affiliation'] or affiliation
-                reference = f"https://doi.org/{doi}" if doi else reference
-                publication = result['publication_title'] or publication
-                domain = result['domain'] or domain
-            else:
-                print(f"Invalid DOI or unable to retrieve metadata for {doi}")
+        # If we don't have metadata yet, try extracting from TEI XML
+        if not authors or not affiliations:
+            logger.info("Attempting to extract metadata from TEI XML")
+            try:
+                xml_metadata = TEI.metadata(soup)
+                # Only use metadata we haven't already gotten from CrossRef
+                published = published or xml_metadata[0]
+                publication = publication or xml_metadata[1]
+                authors = authors or xml_metadata[2]
+                affiliations = affiliations or xml_metadata[3]
+                affiliation = affiliation or xml_metadata[4]
+            except Exception as e:
+                logger.error(f"Error extracting metadata from TEI XML: {str(e)}")
 
         # Validate parsed data
         if not title and not reference:
-            print("Failed to parse content - no unique identifier found")
+            logger.error("Failed to parse content - no unique identifier found")
             return None
 
         # Parse text sections
         sections = TEI.text(soup, title)
 
-        # Derive uid
-        uid = hashlib.sha1(
-            title.encode("utf-8") if title else reference.encode("utf-8")
-        ).hexdigest()
+        # Derive uid - use DOI if available, otherwise hash of title
+        if reference:
+            uid = reference.split('/')[-1]  # Use last part of DOI as uid
+        else:
+            uid = hashlib.sha1(title.encode("utf-8")).hexdigest()
 
         # Default title to source if empty
         title = title if title else source

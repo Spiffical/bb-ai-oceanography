@@ -219,3 +219,4 @@ SciDownl/
 tests/test_inference.py
 reports/ML in Ocean Sciences Report -- demo.md
 papers/
+scripts/dl_pypaperbot.py

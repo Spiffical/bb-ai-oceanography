@@ -286,7 +286,11 @@ python scripts/download_papers.py --doi 10.1016/j.example.2023.123456 output_pat
 sudo docker run --rm --gpus all --init --ulimit core=0 -p 8070:8070 -v /path/to/bb-ai-oceanography/config/grobid.yaml:/opt/grobid/grobid-home/config/grobid.yaml:ro grobid/grobid:0.8.0
 ```
 
-Replace `/path/to/bb-ai-oceanography` with the actual path to your project directory.
+Replace `/path/to/bb-ai-oceanography` with the actual path to your project directory, e.g. if you're currently in the project directory, you can use $PWD:
+
+```bash
+sudo docker run --rm --gpus all --init --ulimit core=0 -p 8070:8070 -v $PWD/config/grobid.yaml:/opt/grobid/grobid-home/config/grobid.yaml:ro grobid/grobid:0.8.1
+```
 
 3. In a separate terminal, run paperetl to extract content and create an SQLite database:
 

@@ -12,6 +12,7 @@ PATTERN = None
 def getPattern():
     """
     Gets or builds a pre-compiled regex for cleaning text.
+    Only removes problematic patterns while preserving actual content.
 
     Returns:
         compiled regex
@@ -29,17 +30,20 @@ def getPattern():
         # Remove urls
         patterns.append(r"http(s)?\:\/\/\S+")
 
-        # Remove single characters repeated at least 3 times (ex. j o u r n a l)
-        patterns.append(r"(^|\s)(\w\s+){3,}")
-
-        # Remove citations references (ex. [3] [4] [5])
+        # Remove citation references (ex. [3] [4] [5])
         patterns.append(r"(\[\d+\]\,?\s?){3,}(\.|\,)?")
 
-        # Remove citations references (ex. [3, 4, 5])
+        # Remove citation references (ex. [3, 4, 5])
         patterns.append(r"\[[\d\,\s]+\]")
 
-        # Remove citations references (ex. (NUM1) repeated at least 3 times with whitespace
+        # Remove citation references (ex. (1) (2) (3))
         patterns.append(r"(\(\d+\)\s){3,}")
+
+        # Remove excessive whitespace
+        patterns.append(r"\s{2,}")
+
+        # Remove excessive periods
+        patterns.append(r"\.{2,}")
 
         PATTERN = re.compile("|".join([f"({p})" for p in patterns]))
 
@@ -55,6 +59,7 @@ class Text:
     def transform(text):
         """
         Transforms and cleans text to help improve text indexing accuracy.
+        Preserves actual content while removing only problematic patterns.
 
         Args:
             text: input text line
@@ -63,11 +68,14 @@ class Text:
             transformed text
         """
 
+        if not text:
+            return text
+
         # Clean/transform text
         text = getPattern().sub(" ", text)
 
-        # Remove extra spacing either caused by replacements or already in text
-        text = re.sub(r" {2,}|\.{2,}", " ", text)
+        # Remove leading/trailing whitespace
+        text = text.strip()
 
         return text
     
@@ -82,5 +90,7 @@ class Text:
         Returns:
             list of paragraphs
         """
-        print("Text to be paragraph tokenized: ", text)
+        if not text:
+            return []
+            
         return [p.strip() for p in text.split("\n\n") if p.strip()]

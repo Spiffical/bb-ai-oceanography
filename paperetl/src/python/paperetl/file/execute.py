@@ -11,9 +11,12 @@ from ..factory import Factory
 
 from .arx import ARX
 from .csvf import CSV
+from .jats import JATS
 from .pdf import PDF
 from .pmb import PMB
 from .tei import TEI
+
+from bs4 import BeautifulSoup
 
 
 class Execute:
@@ -55,7 +58,7 @@ class Execute:
             config: path to config directory
         """
 
-        print(f"Processing: {path}")
+        print(f"\nProcessing: {path}")
 
         # Determine if file needs to be open in binary or text mode
         mode = Execute.mode(source, extension)
@@ -66,11 +69,28 @@ class Execute:
             if extension == "pdf":
                 yield PDF.parse(stream, source)
             elif extension == "xml":
+                # Try to detect XML format by parsing with BeautifulSoup
+                content = stream.read()
+                stream.seek(0)  # Reset stream position
+                
+                soup = BeautifulSoup(content, "lxml-xml")
+                root = soup.find()  # Get root element
+                
+                # Check for arXiv and PubMed first
                 if source and source.lower().startswith("arxiv"):
                     yield from ARX.parse(stream, source)
                 elif source and source.lower().startswith("pubmed"):
                     yield from PMB.parse(stream, source, config)
-                else:
+                # Check for JATS XML by looking for article element or Elsevier wrapper
+                elif (soup.find("article") is not None or 
+                      soup.find("full-text-retrieval-response") is not None):
+                    yield JATS.parse(stream, source)
+                else:  # Default to TEI
+                    print("\nWarning: Could not detect XML format, defaulting to TEI")
+                    print(f"Root element: <{root.name}>")
+                    print("First level elements:")
+                    for child in root.find_all(recursive=False)[:5]:  # Show first 5 direct children
+                        print(f"- <{child.name}>")
                     yield TEI.parse(stream, source)
             elif extension == "csv":
                 yield from CSV.parse(stream, source)
