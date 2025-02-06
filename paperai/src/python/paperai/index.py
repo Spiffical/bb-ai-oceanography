@@ -5,14 +5,18 @@ Indexing module
 import os.path
 import sqlite3
 import sys
+import os
 
 import regex as re
 import yaml
+from dotenv import load_dotenv
 
 from txtai.embeddings import Embeddings
 from txtai.pipeline import Tokenizer
 from txtai.vectors import WordVectors
 
+# Load environment variables from .env file
+load_dotenv(override=True)
 
 class Index:
     """
@@ -38,6 +42,25 @@ class Index:
         db = sqlite3.connect(dbfile)
         cur = db.cursor()
 
+        # Get total number of sections
+        cur.execute("SELECT COUNT(*) FROM sections")
+        total_sections = cur.fetchone()[0]
+        print(f"\nTotal sections in database: {total_sections}")
+
+        # Get number of articles with tags
+        cur.execute("SELECT COUNT(*) FROM articles WHERE tags IS NOT NULL")
+        tagged_articles = cur.fetchone()[0]
+        print(f"Articles with tags: {tagged_articles}")
+
+        # Get sections count for tagged articles
+        cur.execute("""
+            SELECT COUNT(*) 
+            FROM sections s 
+            WHERE article IN (SELECT id FROM articles WHERE tags IS NOT NULL)
+        """)
+        tagged_sections = cur.fetchone()[0]
+        print(f"Sections from tagged articles: {tagged_sections}")
+
         # Select sentences from tagged articles
         query = (
             Index.SECTION_QUERY
@@ -45,35 +68,49 @@ class Index:
         )
 
         if maxsize > 0:
+            print(f"\nLimiting to {maxsize} most recent articles")
             query += f" AND article in (SELECT id FROM articles ORDER BY entry DESC LIMIT {maxsize})"
 
         # Run the query
         cur.execute(query)
 
         count = 0
+        skipped_empty = 0
+        skipped_filtered = 0
+        processed = 0
+        
         for row in cur:
             # Unpack row
             uid, name, text = row
+            count += 1
 
-            if (
-                not scoring
-                or not name
-                or not re.search(Index.SECTION_FILTER, name.lower())
-            ):
+            if not text:
+                skipped_empty += 1
+                continue
+
+            if not scoring or not name or not re.search(Index.SECTION_FILTER, name.lower()):
                 # Tokenize text
                 text = Tokenizer.tokenize(text) if scoring else text
 
                 document = (uid, text, None)
 
-                count += 1
-                if count % 1000 == 0:
-                    print(f"Streamed {count} documents", end="\r")
+                processed += 1
+                if processed % 1000 == 0:
+                    print(f"Processed {processed} documents", end="\r")
 
                 # Skip documents with no tokens parsed
                 if text:
                     yield document
+                else:
+                    skipped_empty += 1
+            else:
+                skipped_filtered += 1
 
-        print(f"Iterated over {count} total rows")
+        print(f"\nProcessing summary:")
+        print(f"Total sections examined: {count}")
+        print(f"Skipped due to empty text: {skipped_empty}")
+        print(f"Skipped due to section filters: {skipped_filtered}")
+        print(f"Successfully processed: {processed}")
 
         # Free database resources
         db.close()
@@ -89,22 +126,36 @@ class Index:
         Returns:
             configuration
         """
+        
+        # Get HF token from environment
+        hf_token = os.getenv('HUGGING_FACE_HUB_TOKEN') or os.getenv('HF_TOKEN')
 
         # Configuration as a dictionary
         if isinstance(vectors, dict):
+            if hf_token:
+                vectors['token'] = hf_token
             return vectors
 
         # Configuration as a YAML file
         if isinstance(vectors, str) and vectors.endswith(".yml"):
             with open(vectors, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f)
+                config = yaml.safe_load(f)
+                if hf_token:
+                    config['token'] = hf_token
+                return config
 
         # Configuration for word vectors model
         if WordVectors.isdatabase(vectors):
-            return {"path": vectors, "scoring": "bm25", "pca": 3, "quantize": True}
+            config = {"path": vectors, "scoring": "bm25", "pca": 3, "quantize": True}
+            if hf_token:
+                config['token'] = hf_token
+            return config
 
         # Use vector path if provided, else use default txtai configuration
-        return {"path": vectors} if vectors else None
+        config = {"path": vectors} if vectors else None
+        if config and hf_token:
+            config['token'] = hf_token
+        return config
 
     @staticmethod
     def embeddings(dbfile, vectors, maxsize):
@@ -120,8 +171,33 @@ class Index:
             embeddings index
         """
 
+        # Load .env file and get HF token
+        load_dotenv()  # Reload to ensure we have the latest values
+        hf_token = os.getenv('HUGGING_FACE_HUB_TOKEN') or os.getenv('HF_TOKEN')
+        print(f"Debug: Found HF token: {'Yes' if hf_token else 'No'}")
+
         # Read config and create Embeddings instance
-        embeddings = Embeddings(Index.config(vectors))
+        config = Index.config(vectors)
+        print(f"Debug: Initial config: {config}")
+        
+        # If no config exists, create a default one
+        if not config:
+            config = {
+                'path': 'sentence-transformers/all-MiniLM-L6-v2'  # This is a commonly used model that should work
+            }
+            print("Debug: Created new config with default model path")
+        
+        # Ensure token is in config
+        if hf_token:
+            config['token'] = hf_token
+            # Also set it as an environment variable for transformers library
+            os.environ['HUGGING_FACE_HUB_TOKEN'] = hf_token
+            os.environ['HF_TOKEN'] = hf_token
+            print("Debug: Added token to config and environment: ", hf_token)
+        
+        print(f"Debug: Final config being passed to Embeddings: {config}")
+
+        embeddings = Embeddings(config)
         scoring = embeddings.isweighted()
 
         # Build scoring index if scoring method provided

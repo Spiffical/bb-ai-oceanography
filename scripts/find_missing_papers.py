@@ -5,6 +5,7 @@ import pandas as pd
 import logging
 import requests
 from tqdm import tqdm
+import sqlite3
 
 # Add the project root directory to the Python path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -47,9 +48,39 @@ def check_paper_exists(doi, papers_dir):
     
     return os.path.exists(pdf_path) or os.path.exists(xml_path)
 
-def find_missing_papers(input_csv, papers_dir, output_csv):
+def check_paper_exists_in_db(doi, db_path):
     """
-    Find papers that don't have either PDF or XML files
+    Check if paper exists in SQLite database
+    """
+    if not doi or pd.isna(doi):
+        return False
+        
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Extract just the DOI part from URLs like https://doi.org/10.1007/s00376-015-5190-8
+        doi_suffix = doi.split('doi.org/')[-1] if 'doi.org' in doi else doi
+        
+        # Check if DOI exists in Reference column
+        cursor.execute("SELECT 1 FROM articles WHERE Reference LIKE ?", (f'%{doi_suffix}%',))
+        exists = cursor.fetchone() is not None
+        
+        conn.close()
+        return exists
+    except sqlite3.Error as e:
+        logger.error(f"Database error when checking DOI {doi}: {str(e)}")
+        return False
+
+def find_missing_papers(input_csv, papers_source, output_csv, use_db=False):
+    """
+    Find papers that don't have either PDF/XML files or database entries
+    
+    Args:
+        input_csv: Path to input CSV file
+        papers_source: Path to either papers directory or SQLite database
+        output_csv: Path to output CSV file
+        use_db: Boolean indicating whether to check against database instead of files
     """
     # Read CSV and select only the desired columns
     desired_columns = ['Title', 'DOI', 'Year', 'Journal', 'Citation Count']
@@ -67,7 +98,11 @@ def find_missing_papers(input_csv, papers_dir, output_csv):
             df = df[desired_columns]
 
         # Create mask for missing papers
-        df['exists'] = df['DOI'].apply(lambda x: check_paper_exists(x, papers_dir))
+        if use_db:
+            df['exists'] = df['DOI'].apply(lambda x: check_paper_exists_in_db(x, papers_source))
+        else:
+            df['exists'] = df['DOI'].apply(lambda x: check_paper_exists(x, papers_source))
+            
         missing_papers = df[~df['exists']].drop(columns=['exists'])
         
         # Add publisher information for missing papers
@@ -85,14 +120,15 @@ def find_missing_papers(input_csv, papers_dir, output_csv):
         return len(df), len(missing_papers)
         
     except Exception as e:
-        logger.error(f"Error reading CSV file: {str(e)}")
+        logger.error(f"Error processing data: {str(e)}")
         raise
 
 def main():
-    parser = argparse.ArgumentParser(description="Find papers missing from the papers directory")
+    parser = argparse.ArgumentParser(description="Find papers missing from the papers directory or database")
     parser.add_argument("input_csv", help="Path to input CSV file containing paper information")
-    parser.add_argument("papers_dir", help="Path to directory containing pdf and xml folders")
+    parser.add_argument("papers_source", help="Path to either papers directory or SQLite database")
     parser.add_argument("output_csv", help="Path to save the CSV file containing missing papers")
+    parser.add_argument("--use-db", action="store_true", help="Use SQLite database instead of papers directory")
     
     args = parser.parse_args()
     
@@ -101,20 +137,21 @@ def main():
         logger.error(f"Input CSV file does not exist: {args.input_csv}")
         return
         
-    if not os.path.exists(args.papers_dir):
-        logger.error(f"Papers directory does not exist: {args.papers_dir}")
+    if not os.path.exists(args.papers_source):
+        logger.error(f"Source path does not exist: {args.papers_source}")
         return
         
-    # Verify pdf and xml subdirectories exist
-    pdf_dir = os.path.join(args.papers_dir, 'pdf')
-    xml_dir = os.path.join(args.papers_dir, 'xml')
-    
-    if not os.path.exists(pdf_dir) or not os.path.exists(xml_dir):
-        logger.error(f"Papers directory must contain 'pdf' and 'xml' subdirectories")
-        return
+    if not args.use_db:
+        # Verify pdf and xml subdirectories exist
+        pdf_dir = os.path.join(args.papers_source, 'pdf')
+        xml_dir = os.path.join(args.papers_source, 'xml')
+        
+        if not os.path.exists(pdf_dir) or not os.path.exists(xml_dir):
+            logger.error(f"Papers directory must contain 'pdf' and 'xml' subdirectories")
+            return
     
     try:
-        total, missing = find_missing_papers(args.input_csv, args.papers_dir, args.output_csv)
+        total, missing = find_missing_papers(args.input_csv, args.papers_source, args.output_csv, args.use_db)
         logger.info(f"Successfully processed {total} papers and found {missing} missing papers")
     except Exception as e:
         logger.error(f"An error occurred: {str(e)}")

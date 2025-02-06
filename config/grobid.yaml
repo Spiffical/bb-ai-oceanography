@@ -28,8 +28,8 @@ grobid:
     service: "crossref"
     #service: "glutton"
     glutton:
-      url: "https://cloud.science-miner.com/glutton"
-      #url: "http://localhost:8080" 
+      #url: "https://cloud.science-miner.com/glutton"
+      url: "http://localhost:8080" 
     crossref:
       mailto: 
       # to use crossref web API, you need normally to use it politely and to indicate an email address here, e.g. 
@@ -61,7 +61,7 @@ grobid:
   concurrency: 20
   # when the pool is full, for queries waiting for the availability of a Grobid engine, this is the maximum time wait to try 
   # to get an engine (in seconds) - normally never change it
-  poolMaxWait: 5
+  poolMaxWait: 1
 
   delft:
     # DeLFT global parameters
@@ -103,6 +103,22 @@ grobid:
           max_sequence_length: 3000
           batch_size: 10
 
+    - name: "segmentation-article-light"
+      engine: "wapiti"
+      wapiti:
+        # wapiti training parameters, they will be used at training time only
+        epsilon: 0.0000001
+        window: 50
+        nbMaxIterations: 2000
+
+    - name: "segmentation-article-light-ref"
+      engine: "wapiti"
+      wapiti:
+        # wapiti training parameters, they will be used at training time only
+        epsilon: 0.0000001
+        window: 50
+        nbMaxIterations: 2000
+
     - name: "fulltext"
       # at this time, must always be CRF wapiti, the input sequence size is too large for a Deep Learning implementation
       engine: "wapiti"
@@ -136,6 +152,30 @@ grobid:
           #batch_size: 6
           max_sequence_length: 3000
           batch_size: 9
+
+    - name: "header-article-light"
+      engine: "wapiti"
+#      engine: "delft"
+      wapiti:
+        # wapiti training parameters, they will be used at training time only
+        epsilon: 0.000001
+        window: 30
+        nbMaxIterations: 1500
+      delft:
+        architecture: "BidLSTM_ChainCRF_FEATURES"
+        useELMo: false
+
+    - name: "header-article-light-ref"
+      engine: "wapiti"
+#      engine: "delft"
+      wapiti:
+        # wapiti training parameters, they will be used at training time only
+        epsilon: 0.000001
+        window: 30
+        nbMaxIterations: 1500
+      delft:
+        architecture: "BidLSTM_ChainCRF_FEATURES"
+        useELMo: false
 
     - name: "reference-segmenter"
       engine: "wapiti"
@@ -232,10 +272,23 @@ grobid:
 
     - name: "patent-citation"
       engine: "wapiti"
+      #engine: "delft"
       wapiti:
         # wapiti training parameters, they will be used at training time only
         epsilon: 0.0001
         window: 20
+      delft:
+        # deep learning parameters
+        architecture: "BidLSTM_CRF_FEATURES"
+        #architecture: "BERT_CRF"
+        runtime:
+          # parameters used at runtime/prediction
+          max_sequence_length: 800
+          batch_size: 20
+        training:
+          # parameters used for training
+          max_sequence_length: 1000
+          batch_size: 40
 
     - name: "funding-acknowledgement"
       engine: "wapiti"
@@ -259,6 +312,28 @@ grobid:
           # parameters used for training
           max_sequence_length: 500  
           batch_size: 40
+
+    - name: "copyright"
+      # at this time, we only have a DeLFT implementation, 
+      # use "wapiti" if the deep learning library JNI is not available and model will then be ignored
+      #engine: "delft"
+      engine: "wapiti"
+      delft:
+        # deep learning parameters
+        architecture: "gru"
+        #architecture: "bert"
+        #transformer: "allenai/scibert_scivocab_cased"
+
+    - name: "license"
+      # at this time, for being active, it must be DeLFT, no other implementation is available
+      # use "wapiti" if the deep learning library JNI is not available and model will then be ignored
+      #engine: "delft"
+      engine: "wapiti"
+      delft:
+        # deep learning parameters
+        architecture: "gru"
+        #architecture: "bert"
+        #transformer: "allenai/scibert_scivocab_cased"
 
   # for **service only**: how to load the models, 
   # false -> models are loaded when needed, avoiding putting in memory useless models (only in case of CRF) but slow down 
@@ -289,17 +364,7 @@ logging:
     com.squarespace.jersey2.guice.JerseyGuiceUtils: "OFF"
   appenders:
     - type: console
-      threshold: WARN
-      timeZone: UTC
-      # uncomment to have the logs in json format
-      #layout:
-      #  type: json
-    - type: file
-      currentLogFilename: logs/grobid-service.log
       threshold: INFO
-      archive: true
-      archivedLogFilenamePattern: logs/grobid-service-%d.log
-      archivedFileCount: 5
       timeZone: UTC
       # uncomment to have the logs in json format
       #layout:

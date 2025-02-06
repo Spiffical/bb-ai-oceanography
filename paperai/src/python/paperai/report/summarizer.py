@@ -143,10 +143,12 @@ class Summarizer:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    max_tokens=1500,
-                    temperature=0.7,
-                    top_p=0.9,
-                    frequency_penalty=1.2
+                    max_tokens=2000,
+                    temperature=0.3,
+                    top_p=0.8,
+                    frequency_penalty=0.8,
+                    presence_penalty=0.6,
+                    stop=["Summary:", "Assistant:", "Model:"]
                 )
                 return response.choices[0].message.content
             else:
@@ -156,8 +158,8 @@ class Summarizer:
                     prompt=full_prompt,
                     model=self.model_name,
                     max_new_tokens=1500,
-                    temperature=0.7,
-                    top_p=0.9,
+                    temperature=0.3,
+                    top_p=0.8,
                     repetition_penalty=1.2
                 )
                 return self._process_response(response)
@@ -281,7 +283,7 @@ class Summarizer:
 
         Your summaries should:
         1. Be written in clear, connected paragraphs without any headings, bullet points, or section breaks
-        2. Directly quote relevant passages from the source texts, enclosing them in double quotation marks
+        2. Directly quote relevant passages from the source texts, enclosing sthem in double quotation marks
         3. Include citation numbers (e.g., [1]) immediately after quotation marks
         4. Incorporate quotes and citations naturally into the paragraph flow
         5. Focus only on information relevant to the given query

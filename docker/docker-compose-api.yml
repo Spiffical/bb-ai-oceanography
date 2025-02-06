@@ -4,14 +4,13 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.api
     volumes:
-      - .:/app
-      - ~/.cache/huggingface:/root/.cache/huggingface
-    working_dir: /app
+      - ..:/work
+    working_dir: /work
     environment:
-      - PYTHONPATH=/app/paperai/src/python
+      - PYTHONPATH=/work/paperai/src/python
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
     env_file:
-      - .env
+      - ../.env
     tty: true
     stdin_open: true

@@ -21,7 +21,7 @@ from urllib.parse import urljoin, unquote, urlparse, urljoin
 from utils.file_utils import sanitize_filename, titles_are_similar
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 # Set up Unpaywall credentials
 UnpywallCredentials(os.getenv('UNPAYWALL_EMAIL'))
@@ -32,6 +32,15 @@ WILEY_API_KEY = os.getenv('WILEY_API_KEY')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+logger.info("Environment variables for Springer:")
+logger.info(f"From os.environ: {os.environ.get('SPRINGER_API_KEY')}")
+logger.info(f"From os.getenv: {os.getenv('SPRINGER_API_KEY')}")
+logger.info(f"From .env file (should be): 36ea2ce11bf10a0ddc9b81dcfb2d07b6")
+
+logger.info(f"Current working directory: {os.getcwd()}")
+logger.info(f"Absolute path to .env file: {os.path.abspath('.env')}")
+logger.info(f"Does .env file exist? {os.path.exists('.env')}")
 
 def retry_on_exception(max_retries=3, delay=1):
     def decorator(func):
@@ -275,52 +284,81 @@ def download_pdf(url):
 
 
 def get_full_text_springer(doi):
-    """
-    Retrieve full text content from Springer API for a given DOI.
-
-    This function attempts to fetch JATS XML content for the specified article using the Springer API.
-
+    """Get full text from Springer Nature using the Full Text TDM API.
+    
     Args:
         doi (str): The Digital Object Identifier (DOI) of the article.
-
+        
     Returns:
         tuple: A tuple containing two elements:
             - bool: True if the retrieval was successful, False otherwise.
-            - dict or str: If successful, a dictionary containing 'xml' key with the JATS XML content.
-                           If unsuccessful, an error message string.
-
-    Raises:
-        requests.exceptions.RequestException: For network-related errors during the API request.
-        Exception: For any unexpected errors during the API request.
+            - dict or str: If successful, a dictionary containing 'xml' and optionally 'pdf' keys.
+                          If unsuccessful, an error message string.
     """
-    base_url = 'https://api.springernature.com/openaccess/jats'
+    api_key = os.getenv('SPRINGER_API_KEY')
+    if not api_key:
+        return False, "No API key found"
+    
+    base_url = "https://spdi.public.springernature.app/xmldata/jats"
     params = {
-        "q": f'doi:"{doi}"',
-        "api_key": SPRINGER_API_KEY,
-        "p": 1  # Limit to 1 result since we're querying a specific DOI
+        'api_key': api_key,
+        'q': f'doi:{doi}'
     }
     
     try:
         response = requests.get(base_url, params=params)
+        logger.info(f"Request URL: {response.url}")
+        logger.info(f"Status Code: {response.status_code}")
         response.raise_for_status()
         
         if response.status_code == 200:
-            xml_content = response.text
+            content = response.text
             
-            # Check if the response actually contains JATS content
-            if '<article' in xml_content:
-                return True, {"xml": xml_content}
-            else:
-                return False, f"No open access JATS content found for DOI: {doi}"
+            # Check if we got meaningful content
+            if '<response><total>0</total>' in content or '<recordsDisplayed>0</recordsDisplayed>' in content:
+                return False, "No content found for this DOI"
+            
+            # Print first few XML tags to help debug
+            tags = re.findall(r'<(\w+)[>\s]', content[:1000])
+            
+            # Check for various possible article tags and full-text indicators
+            article_tags = ['article', 'book-part', 'chapter']
+            found_tags = [tag for tag in article_tags if f'<{tag}' in content.lower()]
+            
+            if not found_tags:
+                return False, f"Response does not contain any expected content tags. Looking for: {article_tags}"
+            
+            # Check for full-text indicators
+            full_text_indicators = [
+                '<body', 
+                '<sec', 
+                '<p>', 
+                '<abstract',
+                '<full-text'
+            ]
+            has_full_text = any(indicator in content.lower() for indicator in full_text_indicators)
+            
+            if not has_full_text:
+                return False, "Response does not appear to contain full text content"
+            
+            # Try to extract PDF URL if available
+            pdf_url = extract_pdf_url_from_xml(content)
+            if pdf_url:
+                try:
+                    pdf_content = download_pdf(construct_full_url(pdf_url, "Springer API"))
+                    if pdf_content:
+                        return True, {"xml": content, "pdf": pdf_content}
+                except Exception as e:
+                    logger.warning(f"Failed to download PDF: {e}")
+            
+            # Return XML content if we have it, even without PDF
+            return True, {"xml": content}
+            
         else:
-            return False, f"No records found for DOI: {doi}"
-        
+            return False, f"Error: {response.status_code}"
+            
     except requests.exceptions.RequestException as e:
-        logger.error(f"Network error when querying Springer API: {str(e)}")
-        return False, f"Network error: {str(e)}"
-    except Exception as e:
-        logger.error(f"Unexpected error querying Springer API: {str(e)}")
-        return False, f"Unexpected error: {str(e)}"
+        return False, str(e)
 
 def get_full_text_wiley(doi):
     """
