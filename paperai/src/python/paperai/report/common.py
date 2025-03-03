@@ -220,7 +220,7 @@ class Report:
             self.separator(output)
 
             # Generate summary
-            summary, citation_details = self.generate_summary(results, 20, query)
+            summary, citation_details = self.generate_summary(results, min(20, int(topn/2)), query)
             formatted_summary = self.format_citations(summary, citation_details)
 
             # Write summary section
