@@ -1,20 +1,20 @@
 # 🌊 bb-ai-oceanography: Full-Text Analysis of Machine Learning in Oceanography
 
-This repository is an extended version of Taylor Denouden's [bb-ai-oceanography](https://github.com/tayden/bb-ai-oceanography/) project. While the original repository focused on analyzing paper *abstracts* using Large Language Models (LLMs), this fork expands the scope to include *full-text* analysis and fully-cited report generation of scientific papers related to machine learning applications in oceanography. Report generation could absolutely benefit from the work previously done to identify topic areas, e.g. the report queries could focus on specific topic areas.
+This repository is an extended version of Taylor Denouden's [bb-ai-oceanography](https://github.com/tayden/bb-ai-oceanography/) project. While the original repository focused on analyzing paper *abstracts* using Large Language Models (LLMs), this fork expands the scope to include *full-text* analysis and fully-cited report generation of scientific papers related to machine learning applications in oceanography. Report generation could absolutely benefit from the work previously done by Taylor to identify topic areas, e.g. the report queries could focus on specific topic areas identified in the abstract analysis.
 
 ## 📋 Table of Contents
 
-1. [Project Overview](#project-overview)
-2. [Key Features](#key-features)
-3. [Getting Started](#getting-started)
+1. [Project Overview](#-project-overview)
+2. [Key Features](#-key-features)
+3. [Getting Started](#-getting-started)
    - [Prerequisites](#prerequisites)
    - [Installation and Setup Options](#installation-and-setup-options)
-4. [Report Configuration](#report-configuration)
-5. [Usage](#usage)
+4. [Report Configuration](#-report-configuration)
+5. [Usage](#-usage)
    - [Quick Start (Using Pre-processed Model)](#quick-start-using-pre-processed-model)
    - [Building from Scratch (Optional)](#building-from-scratch-optional)
-6. [Project Structure](#project-structure)
-7. [Acknowledgments](#acknowledgments)
+6. [Project Structure](#-project-structure)
+7. [Acknowledgments](#-acknowledgments)
 
 ## 🎯 Project Overview
 
@@ -36,6 +36,7 @@ The project aims to provide a comprehensive analysis of the current state of mac
 Changes made to `paperetl`:
 - Extracting paragraphs instead of sentences for improved summary quality
 - Improved error handling
+- Added support for more XML formats
 
 Changes made to `paperai`  :
 - One of the major improvements to `paperai`'s report generation made in this repository is the addition of a properly cited summary section. This is done by using an LLM (either through the API or locally) to generate the summary given a query. See below for an example of what the summary looks like given the query "emerging trends or future directions in machine learning for ocean sciences":
@@ -148,7 +149,7 @@ Choose this option if you want to run models locally without API costs.
    ```
 </details>
 
-### ⚙️ Report Configuration
+## ⚙️ Report Configuration
 
 Reports are configured through YAML files in the `reports/` directory. Each configuration file defines how the report should be generated and what content to analyze.
 
