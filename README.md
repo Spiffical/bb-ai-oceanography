@@ -9,7 +9,7 @@ This repository is an extended version of Taylor Denouden's [bb-ai-oceanography]
 3. [Getting Started](#-getting-started)
    - [Prerequisites](#prerequisites)
    - [Installation and Setup Options](#installation-and-setup-options)
-4. [Report Configuration](#-report-configuration)
+4. [Report Configuration](#%EF%B8%8F-report-configuration)
 5. [Usage](#-usage)
    - [Quick Start (Using Pre-processed Model)](#quick-start-using-pre-processed-model)
    - [Building from Scratch (Optional)](#building-from-scratch-optional)
