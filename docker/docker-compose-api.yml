@@ -10,6 +10,7 @@ services:
       - PYTHONPATH=/work/paperai/src/python
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
     env_file:
       - ../.env
     tty: true

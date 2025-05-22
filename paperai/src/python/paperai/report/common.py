@@ -3,6 +3,7 @@ Report module
 """
 
 import regex as re
+import json
 from datetime import datetime
 from dateutil import parser
 from tqdm import tqdm
@@ -46,93 +47,325 @@ class Report:
         )
         self.labels = Labels(model=self.similarity) if self.similarity else None
 
-        # Question-answering model
-        # Determine if embeddings or a custom similarity model should be used to build question context
-        self.extractor = Extractor(
-            self.similarity if self.similarity else self.embeddings,
-            options["qa"] if options["qa"] else "NeuML/bert-small-cord19qa",
-            minscore=options.get("minscore"),
-            mintokens=options.get("mintokens"),
-            context=options.get("context", 512),
-        )
-
-        # Initialize the Summarizer
+        # Initialize the Summarizer first
         llm_mode = options.get("llm_mode", "local")
         if llm_mode == "api":
-            model_name = options.get("api", {}).get("model", "gpt-4o-mini")
             api_provider = options.get("api", {}).get("provider", "openai")
         else:
             local_opts = options.get("local", {})
-            model_name = local_opts.get("model", "gemma2:9b")
             provider = local_opts.get("provider", "ollama")
             gpu_strategy = local_opts.get("gpu_strategy", "auto")
+        
         self.summarizer = Summarizer(
-            llm_name=model_name,
+            llm_options=options,
             mode=llm_mode,
-            gpu_strategy=gpu_strategy if llm_mode == "local" else None,
-            provider=api_provider if llm_mode == "api" else provider if llm_mode == "local" else None
+            provider=api_provider if llm_mode == "api" else provider if llm_mode == "local" else None,
+            gpu_strategy=gpu_strategy if llm_mode == "local" else None
         )
 
-    def generate_summary(self, results, topn, query):
+        # Question-answering model setup after summarizer
+        qa_provider = options.get("api", {}).get("provider") if options.get("llm_mode") == "api" else None
+        
+        if qa_provider == "gemini":
+            # For Gemini, we'll use the summarizer for QA
+            self.extractor = self.summarizer
+        else:
+            # For other providers or default behavior, use the standard Extractor
+            self.extractor = Extractor(
+                self.similarity if self.similarity else self.embeddings,
+                options["qa"] if options["qa"] else "NeuML/bert-small-cord19qa",
+                minscore=options.get("minscore"),
+                mintokens=options.get("mintokens"),
+                context=options.get("context", 512),
+            )
+
+    def save_source_details(self, results, output_path):
+        """
+        Saves detailed information about the sources used in the summary to a JSON file.
+        
+        Args:
+            results: List of tuples containing search results
+            output_path: Path to save the source details file
+        """
+        sources = []
+        for _, _, uid, text in results:
+            # Get article metadata
+            self.cur.execute("""
+                SELECT Title, Authors, Published, Source, Reference, Publication
+                FROM articles 
+                WHERE id = ?
+            """, [uid])
+            title, authors, published, source, reference, publication = self.cur.fetchone()
+            
+            # Get section name and full context
+            self.cur.execute("""
+                SELECT Name, Text
+                FROM sections
+                WHERE article = ? AND Text LIKE ?
+            """, [uid, f"%{text}%"])
+            section_name, full_text = self.cur.fetchone() or (None, None)
+            
+            # Format the date
+            if published:
+                try:
+                    if isinstance(published, str):
+                        published = parser.parse(published).strftime("%Y-%m-%d")
+                    elif isinstance(published, int):
+                        published = str(published)
+                except (ValueError, TypeError):
+                    published = str(published)
+
+            # Build source entry
+            source_entry = {
+                "title": title,
+                "authors": authors.split(", ") if authors else [],
+                "published_date": published,
+                "doi": source.split(".pdf")[0].replace("_", "/") if source else None,
+                "url": reference,
+                "publication": publication,
+                "section": {
+                    "name": section_name,
+                    "text": text,
+                    "full_context": full_text
+                }
+            }
+            sources.append(source_entry)
+
+        # Save to file
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump({"sources": sources}, f, indent=2, ensure_ascii=False)
+
+    def generate_summary(self, results, topn, query, columns=None):
         """
         Generates a summary using the specified model based on the top results and the query.
+        
+        Args:
+            results: Search results
+            topn: Number of top results to use
+            query: Main query string
+            columns: List of column configurations to guide the summary
         """
+        print(f"\nGenerating summary for query: {query}... using: \n"
+              f"- Model: {self.summarizer.model_name} \n"
+              f"- Provider: {self.summarizer.provider} \n"
+              f"- Mode: {self.summarizer.mode}")
+        
         top_results = results[:topn]
         context, citation_details = self._prepare_context(top_results)
         
-        summary = self.summarizer.generate_summary(context, query)
+        # Build enhanced query incorporating column configurations
+        enhanced_query = query
+        if columns:
+            aspects = []
+            for col in columns:
+                if isinstance(col, dict) and "query" in col:
+                    aspect = f"Information about '{col['query']}'"
+                    if "question" in col:
+                        aspect += f", specifically '{col['question']}'"
+                    aspects.append(aspect)
+            
+            if aspects:
+                enhanced_query += "\n\nPlease ensure the summary addresses these specific aspects:\n- "
+                enhanced_query += "\n- ".join(aspects)
         
-        return summary, citation_details
+        # Generate the summary with a single call
+        summary = self.summarizer._generate_text(
+            self._get_summary_prompt(context, enhanced_query),
+            self._get_summary_system_prompt()
+        )
+        formatted_summary = self.format_citations(summary, citation_details)
+        
+        # Save source details to a JSON file
+        output_base = getattr(self.options.get("output", ""), "name", "report")
+        if isinstance(output_base, str):
+            output_base = output_base.replace(".md", "").replace(".csv", "")
+        sources_file = f"{output_base}_sources.json"
+        self.save_source_details(top_results, sources_file)
+        
+        return formatted_summary, citation_details
+
+    def _get_summary_prompt(self, context, query):
+        """
+        Get the prompt for summary generation.
+        """
+        example_paragraph = (
+            "Recent advances in machine learning have revolutionized oceanographic research. \"Deep learning models have "
+            "enabled unprecedented accuracy in predicting ocean temperature patterns\" [1.2], while \"satellite data combined "
+            "with neural networks has improved our understanding of global ocean circulation\" [1.3]. These technological "
+            "breakthroughs have led to \"more precise forecasting of extreme weather events and their impacts on marine ecosystems\" [2.1]."
+        )
+
+        return (
+            f"Write a comprehensive, flowing summary addressing this query: '{query}'\n\n"
+            f"Important Instructions:\n"
+            f"- Use ONLY the information from the provided context\n"
+            f"- Quote directly from the sources using double quotation marks\n"
+            f"- Include citation numbers [article.paragraph] immediately after each quote\n"
+            f"- Write in clear paragraphs WITHOUT any headings or sections\n"
+            f"- Make the text flow naturally from one topic to the next\n"
+            f"- Use no more than 3 citations per sentence\n"
+            f"- Try not to cite the same article several times in the same paragraph, i.e. synthesize information from multiple articles and try to cite different articles in each paragraph\n"
+            f"- Ensure citations are relevant to the discussion\n"
+            f"- Do NOT use bullet points or numbered lists in your response\n"
+            f"- Do NOT refer to the sources in the context as texts\n"
+            f"- Write ONLY in connected paragraphs\n"
+            f"- Ensure smooth transitions between ideas\n"
+            f"- Be thorough but concise\n"
+            f"- Maintain academic writing style\n\n"
+            f"Context:\n{context}\n\n"
+            f"Example paragraph:\n{example_paragraph}\n\n"
+            f"Remember: Your response should be ONLY in paragraph form, with no headings, sections, or bullet points.\n"
+            f"Each citation should be in the format [article.paragraph] to reference specific paragraphs.\n"
+            f"Summary:\n"
+        )
+
+    def _get_summary_system_prompt(self):
+        """
+        Get the system prompt for summary generation.
+        """
+        return """You are an AI assistant tasked with writing comprehensive, flowing summaries of scientific papers in paragraph form. Your output must be in clear paragraphs with no headings, sections, or bullet points.
+
+        Your summaries should:
+        1. Be written in clear, connected paragraphs without any headings or section breaks
+        2. Directly quote relevant passages from the source texts, enclosing them in double quotation marks
+        3. Include citation numbers (e.g., [1.2]) immediately after quotation marks
+        4. Incorporate quotes and citations naturally into the paragraph flow
+        5. Focus only on information relevant to the given query
+        6. Be thorough yet concise
+        7. Use only the provided citation numbers, not author names
+        8. Flow naturally from one topic to the next without artificial breaks
+        9. Maintain an academic writing style, i.e. write it as if you are writing an academic paper.
+        10. Provide comprehensive coverage while avoiding redundancy
+        11. Try not to cite the same article several times in the same paragraph, i.e. synthesize information from multiple articles and try to cite different articles in each paragraph
+
+        Remember: The output should be a flowing narrative with NO headings, sections, or bullet points. Just clean, connected paragraphs."""
 
     def _prepare_context(self, top_results):
         """
         Prepares the context for summarization and citation details from top results.
+        Includes the full text of each article, with paragraphs numbered for citation.
 
         Args:
             top_results (list): A list of tuples containing the top results from the search.
 
         Returns:
             tuple: A tuple containing two elements:
-                - str: The prepared context as a string, with each result prefixed by its citation number.
-                - dict: A dictionary of citation details, where keys are citation numbers and values are
-                        dictionaries containing 'authors', 'published', and 'source' information.
+                - str: The prepared context as a string, with each paragraph prefixed by its citation number.
+                - dict: A dictionary of citation details, where keys are citation IDs (article_num.para_num)
+                       and values are dictionaries containing article metadata and paragraph text.
         """
         context = []
         citation_details = {}
-        for i, (_, _, uid, text) in enumerate(top_results, start=1):
-            self.cur.execute("SELECT Authors, Published, Source FROM articles WHERE id = ?", [uid])
-            authors, published, source = self.cur.fetchone()
-            citation_details[i] = {"authors": authors, "published": published, "source": source}
-            context.append(f"[{i}]: {text}")
-        return "\n\n".join(context), citation_details
+        
+        # Track processed articles to avoid duplicates
+        processed_uids = set()
+        article_num = 1
+        
+        for _, _, uid, matched_text in top_results:
+            if uid in processed_uids:
+                continue
+                
+            processed_uids.add(uid)
+            
+            # Get article metadata
+            self.cur.execute("""
+                SELECT Title, Authors, Published, Source, Reference, Publication
+                FROM articles 
+                WHERE id = ?
+            """, [uid])
+            title, authors, published, source, reference, publication = self.cur.fetchone()
+            
+            # Get all sections of the article in order
+            self.cur.execute("""
+                SELECT Name, Text
+                FROM sections
+                WHERE article = ?
+                ORDER BY id
+            """, [uid])
+            sections = self.cur.fetchall()
+            
+            # Process article text with numbered paragraphs
+            article_text = []
+            article_text.append(f"Article {article_num}:")
+            article_text.append(f"Title: {title}")
+            if authors:
+                article_text.append(f"Authors: {authors}")
+            
+            para_num = 1
+            for section_name, section_text in sections:
+                if section_name:
+                    article_text.append(f"\n{section_name}:")
+                
+                # Split section into paragraphs and number each one
+                paragraphs = [p.strip() for p in section_text.split('\n\n') if p.strip()]
+                for paragraph in paragraphs:
+                    citation_id = f"{article_num}.{para_num}"
+                    
+                    # Store citation details
+                    citation_details[citation_id] = {
+                        "authors": authors,
+                        "published": published,
+                        "source": source,
+                        "title": title,
+                        "reference": reference,
+                        "publication": publication,
+                        "section": section_name,
+                        "text": paragraph,
+                        "is_matched": matched_text in paragraph
+                    }
+                    
+                    # Add paragraph with citation number
+                    article_text.append(f"\n[{citation_id}] {paragraph}")
+                    
+                    # Add emphasis if this is a matched paragraph
+                    if matched_text in paragraph:
+                        article_text.append("[This paragraph was specifically matched for relevance to the query]")
+                    
+                    para_num += 1
+            
+            # Add the full article text to context
+            context.append('\n'.join(article_text))
+            article_num += 1
+        
+        return "\n\n---\n\n".join(context), citation_details
 
     def format_citations(self, summary, citation_details):
         """
-        Replaces simplified citations with formatted citations including DOI links.
-        Removes duplicate citation numbers.
+        Replaces citations with formatted citations including DOI links and hover text.
+        Handles paragraph-level citations in the format [article_num.para_num].
         """
-        def format_single_citation(citation_number):
-            details = citation_details[citation_number]
+        def format_single_citation(citation_id):
+            details = citation_details[citation_id]
             first_author = details['authors'].split(',')[0].split()[-1] if details['authors'] else "Unknown"
             year = self._get_year(details['published'])
             doi = details['source'].split('.pdf')[0].replace('_', '/') if details['source'] else "Unknown"
-            return f'[{first_author} et al., {year}](https://doi.org/{doi})'
+            
+            # Create hover text with section, title and the exact paragraph being cited
+            hover_text = f"Title: {details['title']}"
+            if details['section']:
+                hover_text += f"\nSection: {details['section']}"
+            hover_text += f"\n\nCited text:\n{details['text']}"
+            
+            # Escape quotes and newlines for title attribute
+            hover_text = hover_text.replace('"', '&quot;').replace('\n', '&#10;')
+            
+            return f'[{first_author} et al., {year}](https://doi.org/{doi} "{hover_text}")'
 
         def replace_citation(match):
-            citation_numbers = re.split(r'[,;]\s*', match.group(1))
+            citation_ids = re.split(r'[,;]\s*', match.group(1))
             # Remove duplicates while preserving order
-            unique_numbers = []
+            unique_ids = []
             seen = set()
-            for num in citation_numbers:
-                num = int(num.strip())
-                if num not in seen:
-                    unique_numbers.append(num)
-                    seen.add(num)
+            for cid in citation_ids:
+                if cid not in seen and cid in citation_details:
+                    unique_ids.append(cid)
+                    seen.add(cid)
             
-            formatted_citations = [format_single_citation(num) for num in unique_numbers]
+            formatted_citations = [format_single_citation(cid) for cid in unique_ids]
             return f'({", ".join(formatted_citations)})'
 
-        citation_pattern = r'\[(\d+(?:\s*[,;]\s*\d+)*)\]'
+        # Match citations in the format [1.2] or [1.2, 1.3, 2.1]
+        citation_pattern = r'\[(\d+\.\d+(?:\s*[,;]\s*\d+\.\d+)*)\]'
         return re.sub(citation_pattern, replace_citation, summary)
 
     def _get_year(self, published):
@@ -220,7 +453,7 @@ class Report:
             self.separator(output)
 
             # Generate summary
-            summary, citation_details = self.generate_summary(results, min(20, int(topn/2)), query)
+            summary, citation_details = self.generate_summary(results, min(20, int(topn/2)), query, columns)
             formatted_summary = self.format_citations(summary, citation_details)
 
             # Write summary section
@@ -319,7 +552,7 @@ class Report:
         """
         # Get article metadata and abstract
         self.cur.execute("""
-            SELECT a.Title, s.Text as Abstract 
+            SELECT a.Title, s.Text as Abstract, a.Authors, a.Published, a.Source, a.Reference, a.Publication
             FROM articles a
             LEFT JOIN sections s ON a.id = s.article 
             WHERE a.id = ? AND s.Name = 'ABSTRACT'
@@ -329,6 +562,11 @@ class Report:
         result = self.cur.fetchone()
         title = result[0] if result else ""
         abstract = result[1] if result else ""
+        authors = result[2] if result else ""
+        published = result[3] if result else ""
+        source = result[4] if result else ""
+        reference = result[5] if result else ""
+        publication = result[6] if result else ""
 
         # Get introduction for additional context
         self.cur.execute("""
@@ -370,55 +608,117 @@ class Report:
             if results[x]:
                 topn = [text for _, text, _ in results[x]][:matches]
                 value = [self.resolve(params, sections, uid, name, value) for value in topn]
-                fields[name] = "\n\n".join(value) if value else ""
+                fields[name] = self._format_table_cell(" ".join(value)) if value else ""
             else:
                 fields[name] = ""
 
         # Add extraction fields
         if extractions:
             for name, value in self.extractor(extractions, texts):
-                fields[name] = self.resolve(params, sections, uid, name, value) if value else ""
+                fields[name] = self._format_table_cell(self.resolve(params, sections, uid, name, value)) if value else ""
 
         # Add question fields with enhanced context
-        names, qa, contexts, snippets = [], [], [], []
-        for name, query, question, snippet in questions:
-            names.append(name)
-            qa.append(question)
-            
-            # Build enhanced context by combining:
-            # 1. Title and abstract for high-level context
-            # 2. Introduction for background
-            # 3. Field-specific context
-            field_context = fields[query] if query in fields else ""
-            
-            # Get relevant sections using similarity search
-            self.cur.execute("""
-                SELECT Text 
-                FROM sections 
-                WHERE article = ? AND Name NOT IN ('ABSTRACT', 'INTRODUCTION')
-            """, [uid])
-            
-            other_sections = [row[0] for row in self.cur.fetchall()]
-            relevant_sections = self.extractor.query([question], other_sections)[0] if other_sections else []
-            relevant_text = "\n\n".join([text for _, text, _ in relevant_sections[:2]]) if relevant_sections else ""
-            
-            enhanced_context = (
-                f"Title: {title}\n\n"
-                f"Abstract: {abstract}\n\n"
-                f"Introduction: {introduction}\n\n"
-                f"Relevant Context: {field_context}\n\n"
-                f"Additional Context: {relevant_text}"
-            ).strip()
-            
-            contexts.append(enhanced_context)
-            snippets.append(snippet)
+        if questions:
+            # Build article metadata context
+            metadata_context = (
+                f"Title: {title}\n"
+                f"Authors: {authors}\n"
+                f"Published: {published}\n"
+                f"Publication: {publication}\n"
+                f"DOI: {source.split('.pdf')[0].replace('_', '/')} if source else 'Unknown'\n"
+                f"Reference: {reference}\n\n"
+            )
 
-        answers = self.extractor.answers(qa, contexts)
-        for (name, answer), snippet in zip(answers, snippets):
-            value = answer if isinstance(answer, str) else answer[0]
-            fields[name] = self.resolve(params, sections, uid, name, value) if value else ""
+            # Process each question
+            for name, query, question, snippet in questions:
+                # Get field-specific context if query references another field
+                field_context = fields[query] if query in fields else ""
+                
+                # Build comprehensive context
+                context = (
+                    f"{metadata_context}\n"
+                    f"Abstract:\n{abstract}\n\n"
+                    f"Introduction:\n{introduction}\n\n"
+                )
+                
+                # Add field-specific context if available
+                if field_context:
+                    context += f"Relevant Context:\n{field_context}\n\n"
+                
+                # Add other relevant sections
+                self.cur.execute("""
+                    SELECT Name, Text 
+                    FROM sections 
+                    WHERE article = ? AND Name NOT IN ('ABSTRACT', 'INTRODUCTION')
+                    ORDER BY id
+                """, [uid])
+                
+                other_sections = self.cur.fetchall()
+                if other_sections:
+                    # Use similarity search to find relevant sections
+                    section_texts = [text for _, text in other_sections]
+                    relevant_sections = self.extractor.query([question], section_texts)[0] if section_texts else []
+                    
+                    if relevant_sections:
+                        context += "Additional Relevant Sections:\n"
+                        for _, text, _ in relevant_sections[:2]:  # Include top 2 most relevant sections
+                            context += f"{text}\n\n"
+                
+                # Generate answer and format for table cell
+                if isinstance(self.extractor, Summarizer):
+                    # For Gemini, use _generate_gemini directly with table formatting instructions
+                    prompt = (
+                        "Based on the following context, provide a MAXIMUM of 2 CONCISE SENTENCES answering this question:\n"
+                        f"{question}\n\n"
+                        "Important:\n"
+                        "- Response must be MAXIMUM of 2 CONCISE SENTENCES\n"
+                        "- No bullet points or lists\n"
+                        "- No section headers\n"
+                        "- Keep it concise and focused\n"
+                        "- Avoid line breaks\n\n"
+                        "Context:\n"
+                        f"{context}"
+                    )
+                    answer = self.extractor._generate_gemini(prompt, "", is_summary=False)
+                else:
+                    # For other extractors, use standard answer method
+                    answer = self.extractor.answers([question], [context])[0][1]
+                    answer = answer if isinstance(answer, str) else answer[0]
+                
+                fields[name] = self._format_table_cell(self.resolve(params, sections, uid, name, answer)) if answer else ""
 
         return fields
+
+    def _format_table_cell(self, text):
+        """
+        Formats text for table cell display, ensuring it's a clean, single paragraph.
+        
+        Args:
+            text: The text to format
+            
+        Returns:
+            str: Formatted text as a clean, single paragraph
+        """
+        if not text:
+            return ""
+            
+        # Remove any markdown-style headers
+        text = re.sub(r'^#+\s+.*$', '', text, flags=re.MULTILINE)
+        
+        # Remove bullet points and numbered lists
+        text = re.sub(r'^\s*[-*•]\s+', '', text, flags=re.MULTILINE)
+        text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+        
+        # Collapse multiple spaces and newlines
+        text = re.sub(r'\s+', ' ', text)
+        
+        # Remove any remaining markdown formatting
+        text = re.sub(r'[_*~`]', '', text)
+        
+        # Clean up the text
+        text = text.strip()
+        
+        return text
 
     def params(self, metadata):
         """
@@ -503,29 +803,65 @@ class Report:
     def sections(self, uid):
         """
         Retrieves all sections as list for article with given uid.
+        Improves text extraction by:
+        1. Maintaining section order
+        2. Handling subsections properly
+        3. Cleaning and normalizing text
+        4. Filtering out non-content sections
 
         Args:
             uid: article id
 
         Returns:
-            list of section text elements
+            list of tuples containing (section_id, text)
         """
-
-        # Retrieve indexed document text for article
-        self.cur.execute(Index.SECTION_QUERY + " WHERE article = ? ORDER BY id", [uid])
+        # Retrieve indexed document text for article in order
+        self.cur.execute("""
+            SELECT s.id, s.Name, s.Text,
+                   CASE 
+                       WHEN s.Name = 'ABSTRACT' THEN 1
+                       WHEN s.Name = 'INTRODUCTION' THEN 2
+                       WHEN s.Name = 'METHODS' OR s.Name = 'METHODOLOGY' THEN 3
+                       WHEN s.Name = 'RESULTS' THEN 4
+                       WHEN s.Name = 'DISCUSSION' THEN 5
+                       WHEN s.Name = 'CONCLUSION' OR s.Name = 'CONCLUSIONS' THEN 6
+                       ELSE 7
+                   END as section_order
+            FROM sections s
+            WHERE s.article = ?
+            ORDER BY section_order, s.id
+        """, [uid])
 
         # Get list of document text sections
         sections = []
-        for sid, name, text in self.cur.fetchall():
-            if (
-                not self.embeddings.isweighted()
-                or not name
-                or not re.search(Index.SECTION_FILTER, name.lower())
-                or self.options.get("allsections")
-            ):
-                # Check that section has at least 1 token
-                if Tokenizer.tokenize(text):
-                    sections.append((sid, text))
+        for sid, name, text, _ in self.cur.fetchall():  # Added _ to unpack the section_order
+            # Skip non-content sections
+            if name and re.search(r'^(REFERENCES|ACKNOWLEDGMENTS?|APPENDIX|SUPPLEMENTARY)', name.upper()):
+                continue
+
+            # Check if section should be included based on embeddings weight and section filter
+            if (not self.embeddings.isweighted() or 
+                not name or 
+                not re.search(Index.SECTION_FILTER, name.lower()) or 
+                self.options.get("allsections")):
+                
+                # Clean and normalize text
+                if text:
+                    # Remove excessive whitespace
+                    text = re.sub(r'\s+', ' ', text.strip())
+                    
+                    # Remove figure/table references
+                    text = re.sub(r'(Fig\.|Figure|Table|Tab\.)\s*\d+[a-zA-Z]?', '', text)
+                    
+                    # Remove citations in parentheses
+                    text = re.sub(r'\([^)]*\d{4}[^)]*\)', '', text)
+                    
+                    # Check that section has at least 1 token after cleaning
+                    if Tokenizer.tokenize(text):
+                        # Add section name as prefix for context if available
+                        if name and name.upper() not in ['ABSTRACT', 'INTRODUCTION']:
+                            text = f"{name}:\n{text}"
+                        sections.append((sid, text))
 
         return sections
 
@@ -683,4 +1019,32 @@ class Report:
         """
         Writes a separator between sections
         """
+
+    def _get_first_stage_prompt(self, context, query):
+        example_paragraph = (
+            "Recent advances in machine learning have revolutionized oceanographic research. \"Deep learning models have "
+            "enabled unprecedented accuracy in predicting ocean temperature patterns\" [1.2], while \"satellite data combined "
+            "with neural networks has improved our understanding of global ocean circulation\" [1.3]. These technological "
+            "breakthroughs have led to \"more precise forecasting of extreme weather events and their impacts on marine ecosystems\" [2.1]."
+        )
+
+        return (
+            f"Write a flowing, paragraph-based summary addressing this query: '{query}'\n\n"
+            f"Important Instructions:\n"
+            f"- Use ONLY the information from the provided context\n"
+            f"- Quote directly from the sources using double quotation marks\n"
+            f"- Include citation numbers [article.paragraph] immediately after each quote\n"
+            f"- Write in clear paragraphs WITHOUT any headings or sections\n"
+            f"- Make the text flow naturally from one topic to the next\n"
+            f"- Use no more than 3 citations per sentence\n"
+            f"- Ensure citations are relevant to the discussion\n"
+            f"- Do NOT use bullet points or numbered lists in your response\n"
+            f"- Do NOT refer to the sources in the context as texts, just write the summary without mentioning the context\n"
+            f"- Write ONLY in connected paragraphs\n\n"
+            f"Context:\n{context}\n\n"
+            f"Example paragraph:\n{example_paragraph}\n\n"
+            f"Remember: Your response should be ONLY in paragraph form, with no headings, sections, or bullet points.\n"
+            f"Each citation should be in the format [article.paragraph] to reference specific paragraphs.\n"
+            f"Summary:\n"
+        )
 

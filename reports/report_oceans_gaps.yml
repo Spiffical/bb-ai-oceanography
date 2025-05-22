@@ -1,7 +1,7 @@
 name: ML in Ocean Sciences Report -- demo
 
 options:
-  topn: 20
+  topn: 50
   render: md
   qa: "deepset/roberta-base-squad2"
   generate_summary: true
@@ -9,8 +9,16 @@ options:
   
   # API Settings (used if llm_mode is "api")
   api:
-    provider: "openai"  # "openai" or "huggingface"
-    model: "gpt-4o-mini"
+    provider: "gemini"  # "openai", "huggingface", or "gemini"
+    model: "gemini-2.5-flash-preview-05-20"  # Default model for summaries
+    gemini_summary_model: "gemini-2.5-flash-preview-05-20"
+    gemini_qa_model: "gemini-2.0-flash"
+    gemini_summary_temperature: 0.3
+    gemini_summary_max_tokens: 20000
+    gemini_qa_temperature: 0.1
+    gemini_qa_max_tokens: 1000
+    gemini_summary_thinking_budget: 1000  # Must be 0-24576
+    gemini_qa_thinking_budget: 0  # Must be 0-24576
   
   # Local Settings (used if llm_mode is "local")
   local:

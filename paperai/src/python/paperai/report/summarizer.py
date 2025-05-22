@@ -1,44 +1,110 @@
 import torch
 import requests
+import logging
+import asyncio
+import random
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BitsAndBytesConfig
 from huggingface_hub import InferenceClient
 from openai import OpenAI
+from google import genai
+from google.genai import types as genai_types
 import os
 from tqdm import tqdm
+from typing import Any
+import re
+
+# Set up logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class Summarizer:
-    def __init__(self, llm_name="gpt-4o-mini", mode="api", 
-                 provider=None, gpu_strategy="auto"):
+    def __init__(self, llm_options=None, mode="api", provider=None, gpu_strategy="auto"):
         """Initialize the summarizer with specified model and mode.
         
         Args:
-            llm_name (str): Name of the model to use
+            llm_options (dict): Options from the YAML config including model names and parameters
             mode (str): Either "api" or "local"
-            provider (str): Provider to use ("openai"/"huggingface" for API, 
+            provider (str): Provider to use ("openai"/"huggingface"/"gemini" for API, 
                           "ollama"/"huggingface" for local)
             gpu_strategy (str): How to distribute model across devices (for local HF models)
         """
-        self.model_name = llm_name
+        llm_options = llm_options or {}
+        api_opts = llm_options.get("api", {})
+        
+        self.model_name = api_opts.get("model", "gpt-4o-mini")
         self.mode = mode
-        self.provider = provider
+        self.provider = provider or api_opts.get("provider", "openai")
         self.gpu_strategy = gpu_strategy
         self.max_length = 4096
+        self.timeout = 300
         
         # Initialize based on mode and provider
         if mode == "api":
             if provider == "openai":
                 self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-                print(f"Initialized OpenAI client for model: {llm_name}")
+                logger.info(f"Initialized OpenAI client for model: {self.model_name}")
             elif provider == "huggingface":
                 self.client = InferenceClient(
                     token=os.getenv("HUGGING_FACE_HUB_TOKEN"),
-                    timeout=300
+                    timeout=self.timeout
                 )
-                print(f"Initialized Hugging Face client for model: {llm_name}")
+                logger.info(f"Initialized Hugging Face client for model: {self.model_name}")
+            elif provider == "gemini":
+                if not os.getenv("GOOGLE_API_KEY"):
+                    raise ValueError("GOOGLE_API_KEY environment variable not set")
+                self.client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+                
+                # Store Gemini-specific configurations
+                self.gemini_summary_model = api_opts.get("gemini_summary_model", "gemini-1.5-pro-latest")
+                self.gemini_qa_model = api_opts.get("gemini_qa_model", "gemini-1.5-flash-latest")
+                
+                # Model parameters
+                def validate_thinking_budget(value, default, model_name):
+                    """Validate and clamp thinking_budget to valid range (0-24576) for Gemini 2.5 models"""
+                    # Only apply thinking budget for Gemini 2.5 models
+                    if not model_name or not "gemini-2.5" in model_name:
+                        return None
+                    try:
+                        budget = int(value if value is not None else default)
+                        return max(0, min(24576, budget))
+                    except (ValueError, TypeError):
+                        return default
+
+                # Model parameters
+                self.gemini_summary_config = {
+                    "temperature": api_opts.get("gemini_summary_temperature", 0.3),
+                    "max_output_tokens": api_opts.get("gemini_summary_max_tokens", 2000),
+                    "candidate_count": 1,
+                }
+                
+                self.gemini_qa_config = {
+                    "temperature": api_opts.get("gemini_qa_temperature", 0.1),
+                    "max_output_tokens": api_opts.get("gemini_qa_max_tokens", 1000),
+                    "candidate_count": 1,
+                }
+
+                # Add thinking budget only for 2.5 models
+                summary_budget = validate_thinking_budget(
+                    api_opts.get("gemini_summary_thinking_budget"), 
+                    1000, 
+                    self.gemini_summary_model
+                )
+                if summary_budget is not None:
+                    self.gemini_summary_config["thinking_budget"] = summary_budget
+
+                qa_budget = validate_thinking_budget(
+                    api_opts.get("gemini_qa_thinking_budget"), 
+                    100, 
+                    self.gemini_qa_model
+                )
+                if qa_budget is not None:
+                    self.gemini_qa_config["thinking_budget"] = qa_budget
+
+                logger.info(f"Initialized Gemini client with models: {self.gemini_summary_model} (summary), {self.gemini_qa_model} (QA)")
         else:  # local mode
             if provider == "ollama":
                 # Keep the full model identifier for Ollama
-                self.model_name = llm_name  # Don't strip the namespace
+                # Don't strip the namespace
                 
                 self.ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
                 try:
@@ -79,7 +145,7 @@ class Summarizer:
                 except Exception as e:
                     raise ConnectionError(f"Failed to connect to Ollama or pull model: {str(e)}")
             elif provider == "huggingface":
-                print(f"Loading local HF model {llm_name} on GPU with strategy: {gpu_strategy}...")
+                print(f"Loading local HF model {self.model_name} on GPU with strategy: {gpu_strategy}...")
                 self._initialize_hf_model()
 
     def generate_summary(self, context, query):
@@ -151,7 +217,9 @@ class Summarizer:
                     stop=["Summary:", "Assistant:", "Model:"]
                 )
                 return response.choices[0].message.content
-            else:
+            elif self.provider == "gemini":
+                return self._generate_gemini(prompt, system_prompt, is_summary=True)
+            else:  # huggingface
                 # Hugging Face API with system prompt included in prompt
                 full_prompt = f"System: {system_prompt}\nUser: {prompt}\nAssistant:"
                 response = self.client.text_generation(
@@ -164,7 +232,7 @@ class Summarizer:
                 )
                 return self._process_response(response)
         except Exception as e:
-            print(f"\n{self.provider} API Error: {str(e)}")
+            logger.error(f"\n{self.provider} API Error: {str(e)}")
             raise
 
     def _generate_ollama(self, prompt, system_prompt):
@@ -230,6 +298,111 @@ class Summarizer:
         elif summary.lower().startswith("model"):
             summary = summary[len("model"):].lstrip()
         return summary
+
+    async def _call_gemini_api(self, contents: list, model_id: str, config: dict, max_retries: int = 3, base_delay: float = 2.0, max_delay: float = 30.0) -> Any:
+        """
+        Call Gemini API with exponential backoff retry logic.
+        
+        Args:
+            contents: List of content parts for the Gemini API
+            model_id: The Gemini model ID to use
+            config: Dictionary of generation parameters
+            max_retries: Maximum number of retry attempts
+            base_delay: Initial delay between retries in seconds
+            max_delay: Maximum delay between retries in seconds
+            
+        Returns:
+            Gemini API response
+            
+        Raises:
+            Exception: If all retry attempts fail
+        """
+        retry_count = 0
+        last_error = None
+        
+        while retry_count < max_retries:
+            try:
+                logger.info(f"Calling Gemini API (attempt {retry_count + 1}/{max_retries})")
+                
+                # Make the API call
+                response = self.client.models.generate_content(
+                    model=model_id,
+                    contents=contents,
+                    config=genai_types.GenerateContentConfig(
+                        temperature=config.get('temperature', 0.1),
+                        max_output_tokens=config.get('max_output_tokens', 2000),
+                        candidate_count=config.get('candidate_count', 1),
+                        thinking_config=genai_types.ThinkingConfig(
+                            thinking_budget=config.get('thinking_budget', 0)
+                        ) if config.get('thinking_budget') is not None else None
+                    )
+                )
+                
+                logger.info(f"Gemini API call successful using model {model_id}")
+                return response
+                
+            except Exception as e:
+                last_error = e
+                retry_count += 1
+                
+                if retry_count == max_retries:
+                    logger.error(f"Failed after {max_retries} attempts. Last error: {str(e)}")
+                    raise
+                
+                # Calculate delay with exponential backoff
+                delay = min(base_delay * (2 ** (retry_count - 1)), max_delay)
+                
+                # Add some jitter to prevent thundering herd
+                jitter = random.uniform(0, 0.1 * delay)
+                total_delay = delay + jitter
+                
+                logger.warning(f"Attempt {retry_count} failed. Retrying in {total_delay:.2f} seconds... Error: {str(e)}")
+                await asyncio.sleep(total_delay)
+        
+        # If loop completes without success, raise the last error encountered
+        logger.error(f"Gemini API call failed after {max_retries} attempts.")
+        raise last_error
+
+    def _generate_gemini(self, prompt: str, system_prompt: str, is_summary: bool = True) -> str:
+        """
+        Generate text using Gemini API.
+        
+        Args:
+            prompt: The user prompt
+            system_prompt: The system prompt
+            is_summary: Whether this is a summary generation (True) or QA (False)
+            
+        Returns:
+            Generated text
+        """
+        # Select appropriate model and config based on task
+        if is_summary:
+            model_id = self.gemini_summary_model
+            config = self.gemini_summary_config
+        else:
+            model_id = self.gemini_qa_model
+            config = self.gemini_qa_config
+            
+        # Call the API with combined prompt
+        try:
+            # Combine system prompt and user prompt
+            full_prompt = f"{system_prompt}\n\n{prompt}"
+            
+            response = asyncio.run(self._call_gemini_api(
+                contents=[full_prompt],
+                model_id=model_id,
+                config=config
+            ))
+            
+            # Extract the generated text from the response
+            if response.candidates:
+                return response.candidates[0].content.parts[0].text
+            else:
+                raise ValueError("No response candidates received from Gemini API")
+                
+        except Exception as e:
+            logger.error(f"Error generating text with Gemini: {str(e)}")
+            raise
 
     def _get_first_stage_prompt(self, context, query):
 
@@ -387,4 +560,132 @@ class Summarizer:
                 device_map[component] = device
         
         return device_map
+
+    def query(self, queries: list, texts: list) -> list:
+        """
+        Query texts for relevant content using Gemini.
+        
+        Args:
+            queries: List of queries to run
+            texts: List of texts to search through
+            
+        Returns:
+            List of lists containing (score, text, index) tuples for each query
+        """
+        results = []
+        for query in queries:
+            # Build prompt for finding relevant text
+            prompt = f"""
+            Find the most relevant text segments that answer or relate to this query: "{query}"
+            
+            Only return text segments that are DIRECTLY relevant. Rank them by relevance.
+            If no text segments are relevant, return an empty list.
+            
+            Text to search:
+            {' '.join(texts)}
+            """
+            
+            try:
+                # Generate response using Gemini
+                response = self._generate_gemini(prompt, "", is_summary=False)
+                
+                # Extract text segments from response
+                segments = []
+                current_text = ""
+                
+                for line in response.split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith(('•', '-', '*', '1.', '2.', '3.')):
+                        current_text += " " + line
+                    elif current_text:
+                        # Find this text in the original texts
+                        for i, text in enumerate(texts):
+                            if current_text.strip() in text:
+                                segments.append((1.0, current_text.strip(), i))
+                                break
+                        current_text = ""
+                
+                # Add any remaining text
+                if current_text:
+                    for i, text in enumerate(texts):
+                        if current_text.strip() in text:
+                            segments.append((1.0, current_text.strip(), i))
+                            break
+                
+                results.append(segments[:3])  # Return top 3 most relevant segments
+                
+            except Exception as e:
+                logger.error(f"Error in Gemini query: {str(e)}")
+                results.append([])
+                
+        return results
+
+    def __call__(self, extractions: list, texts: list) -> list:
+        """
+        Extract answers from texts using Gemini.
+        
+        Args:
+            extractions: List of tuples containing extraction parameters
+            texts: List of texts to extract from
+            
+        Returns:
+            List of (name, answer) tuples
+        """
+        results = []
+        for extraction in extractions:
+            try:
+                # Unpack the extraction tuple, with defaults for optional parameters
+                name = extraction[0]
+                query = extraction[1]
+                question = extraction[2] if len(extraction) > 2 else query
+                dtype = extraction[3] if len(extraction) > 3 else None
+                
+                # Build prompt combining query and question
+                prompt = f"""
+                Based on this query: "{query}"
+                Please answer this specific question: "{question}"
+                
+                Only use information from the following text:
+                {' '.join(texts)}
+                
+                Provide a direct, concise answer based solely on the text provided.
+                If the answer cannot be found in the text, say "Not found in text."
+                """
+                
+                # Generate answer using Gemini
+                answer = self._generate_gemini(prompt, "", is_summary=False)
+                
+                # Format the answer based on dtype if specified
+                if dtype == "int":
+                    try:
+                        # Extract first number from the answer
+                        numbers = re.findall(r'\d+', answer)
+                        answer = numbers[0] if numbers else answer
+                    except:
+                        pass
+                elif isinstance(dtype, list):
+                    # For categorical data, try to match to allowed values
+                    answer = answer.lower()
+                    for category in dtype:
+                        if category.lower() in answer:
+                            answer = category
+                            break
+                elif dtype in ["days", "weeks", "months", "years"]:
+                    # For duration data, try to normalize to the specified unit
+                    try:
+                        # Extract number and unit from answer
+                        match = re.search(r'(\d+)\s*(day|week|month|year)s?', answer.lower())
+                        if match:
+                            num, unit = match.groups()
+                            answer = f"{num} {unit}s"
+                    except:
+                        pass
+                
+                results.append((name, answer.strip()))
+                
+            except Exception as e:
+                logger.error(f"Error in Gemini extraction: {str(e)}")
+                results.append((name, ""))
+                
+        return results
 

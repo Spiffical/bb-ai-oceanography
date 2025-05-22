@@ -38,7 +38,10 @@ Changes made to `paperetl`:
 - Improved error handling
 - Added support for more XML formats
 
-Changes made to `paperai`  :
+Changes made to `paperai`:
+- Enhanced citation system with paragraph-level precision (e.g., [1.2] refers to article 1, paragraph 2)
+- Hover text on citations now shows the exact paragraph being cited along with article metadata
+- Support for Google's Gemini API with optimized configurations for both summary generation and QA tasks
 - One of the major improvements to `paperai`'s report generation made in this repository is the addition of a properly cited summary section. This is done by using an LLM (either through the API or locally) to generate the summary given a query. More specifically, the query is "embedded" by an embedding model (which turns text into vectors of fixed length), and the `topn` most similar paragraphs (which have been embedded by the same embedding model) in the entire database are retrieved and used as context for the summary generation. See below for an example of what the summary looks like given the query "emerging trends or future directions in machine learning for ocean sciences":
 <details><summary><b>Example Summary</b></summary>
 
@@ -51,6 +54,25 @@ Furthermore, integrating physical models into machine learning algorithms can si
 Overall, these trends underscore an exciting trajectory where interdisciplinary collaborations could lead toward intelligent autonomous systems capable of comprehensive ocean monitoring. Such advancements would not only benefit scientific exploration but also practical applications relevant to societal needs such as energy security or environmental sustainability initiatives surrounding our planet's vast aquatic ecosystems([Lermusiaux et al., 2017](https://doi.org/10.1357/002224017823524035))([Yang et al., 2019](https://doi.org/10.3390/s19071562)).
 </details>
 
+### 📝 Citation Format
+
+The enhanced citation system now provides more precise references to source material:
+
+- Citations use the format `[article_num.paragraph_num]` (e.g., `[1.2]` refers to article 1, paragraph 2)
+- Hovering over a citation reveals:
+  - Article title
+  - Section name (if available)
+  - The exact paragraph being cited
+  - DOI link for easy reference
+- Multiple citations can be combined (e.g., `[1.2, 1.3, 2.1]`)
+- Citations are automatically formatted as clickable links with hover text in the generated markdown
+
+Example citation in the output:
+```markdown
+"Deep learning models have enabled unprecedented accuracy in predicting ocean temperature patterns" [1.2]
+```
+When rendered, this citation becomes a clickable link with hover text showing the exact quoted text and its context.
+
 ## 🚀 Getting Started
 
 ### Prerequisites
@@ -60,6 +82,7 @@ Overall, these trends underscore an exciting trajectory where interdisciplinary 
 - NVIDIA GPU (optional, for local models)
 - One of the following:
   - OpenAI API key (recommended)
+  - Google API key (for Gemini API)
   - Hugging Face account (for API or local models)
   - Local GPU for running models (optional)
 
@@ -146,6 +169,7 @@ Choose this option if you want to run models locally without API costs.
    SPRINGER_API_KEY=your_springer_api_key
    WILEY_API_KEY=your_wiley_api_key
    UNPAYWALL_EMAIL=your_email_address
+   GOOGLE_API_KEY=your_google_api_key  # If using Gemini API
    ```
 </details>
 
@@ -170,8 +194,16 @@ options:
   
   # API Settings (if llm_mode is "api")
   api:
-    provider: "openai"  # "openai" or "huggingface"
-    model: "gpt-4o-mini"  # or other API models
+    provider: "gemini"  # "openai", "huggingface", or "gemini"
+    model: "gemini-2.5-flash-preview-05-20"  # Default model for summaries
+    gemini_summary_model: "gemini-2.5-flash-preview-05-20"  # Model for summary generation
+    gemini_qa_model: "gemini-2.0-flash"  # Model for QA tasks
+    gemini_summary_temperature: 0.3  # Controls randomness in summary generation
+    gemini_summary_max_tokens: 20000  # Maximum tokens for summaries
+    gemini_qa_temperature: 0.1  # Lower temperature for more focused QA
+    gemini_qa_max_tokens: 1000  # Maximum tokens for QA responses
+    gemini_summary_thinking_budget: 1000  # For Gemini 2.5 models (0-24576)
+    gemini_qa_thinking_budget: 0  # For Gemini 2.5 models (0-24576)
   
   # Local Settings (if llm_mode is "local")
   local:
@@ -197,6 +229,7 @@ Key components:
   - `generate_summary`: Whether to include an LLM-generated summary
   - `llm_mode`: Choose between API or local models
   - Mode-specific settings for API or local model usage
+  - Gemini-specific settings for controlling model behavior and performance
 - `sections`: Define what content to analyze
   - `query`: Main search query for this section
   - `columns`: What information to extract and how to organize it
@@ -318,7 +351,6 @@ python -m paperai.report /path/to/report_config.yml 100 md /path/to/output
 Replace:
 - `/path/to/report_config.yml` with the path to your report configuration file (examples can be found in the `reports` directory).
 - `/path/to/output` with the same `/path/to/output` as in the paperetl step.
-
 
 ## 📁 Project Structure
 

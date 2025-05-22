@@ -29,6 +29,7 @@ RUN pip install --no-cache-dir \
     huggingface_hub \
     tqdm \
     openai \
+    google-genai \
     regex \
     python-dateutil \
     txtai[pipeline]
